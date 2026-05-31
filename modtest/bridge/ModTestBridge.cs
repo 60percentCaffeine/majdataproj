@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -214,6 +215,15 @@ namespace ModTestBridge
                         ReadBody(stream, contentLength);
                         _evalDispatcher.ResetSession();
                         WriteJson(stream, 200, "{\"ok\":true,\"phase\":\"reset\",\"sessionVersion\":" + _evalDispatcher.SessionVersion.ToString(CultureInfo.InvariantCulture) + "}");
+                        return;
+                    }
+
+                    if (parts[0] == "POST" && parts[1] == "/shutdown")
+                    {
+                        int contentLength = ContentLength(headers);
+                        ReadBody(stream, contentLength);
+                        bool accepted = _evalDispatcher.RequestShutdown();
+                        WriteJson(stream, accepted ? 200 : 500, "{\"ok\":" + (accepted ? "true" : "false") + ",\"phase\":\"shutdown\",\"accepted\":" + (accepted ? "true" : "false") + ",\"fallbackPid\":" + CurrentPid().ToString(CultureInfo.InvariantCulture) + "}");
                         return;
                     }
 
@@ -515,6 +525,32 @@ namespace ModTestBridge
             }
         }
 
+        public bool RequestShutdown()
+        {
+            try
+            {
+                if (_mainThreadContext != null)
+                {
+                    _mainThreadContext.Post(ShutdownOnMainThread, null);
+                }
+                else
+                {
+                    ShutdownOnMainThread(null);
+                }
+
+                Thread exitThread = new Thread(ExitProcessAfterGracePeriod);
+                exitThread.IsBackground = true;
+                exitThread.Name = "ModTestBridge shutdown fallback";
+                exitThread.Start();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning("Shutdown request failed: " + ex.Message);
+                return false;
+            }
+        }
+
         private EvalResponse Evaluate(EvalWorkItem item, EvalRequest request)
         {
             if (_mainThreadContext != null)
@@ -543,6 +579,44 @@ namespace ModTestBridge
         {
             ((EvalWorkItem)state).StartOnCurrentThread();
         }
+
+        private static void ShutdownOnMainThread(object state)
+        {
+            MelonLogger.Msg("ModTestBridge shutdown requested.");
+            Type applicationType = typeof(UnityEngine.Application);
+            MethodInfo quit = applicationType.GetMethod("Quit", new Type[0]);
+            if (quit == null)
+            {
+                quit = applicationType.GetMethod("Quit", new Type[] { typeof(int) });
+            }
+
+            if (quit == null)
+            {
+                throw new MissingMethodException("UnityEngine.Application.Quit");
+            }
+
+            if (quit.GetParameters().Length == 0)
+            {
+                quit.Invoke(null, null);
+            }
+            else
+            {
+                quit.Invoke(null, new object[] { 0 });
+            }
+        }
+
+        private static void ExitProcessAfterGracePeriod()
+        {
+            Thread.Sleep(2000);
+            MelonLogger.Msg("ModTestBridge forcing process exit after graceful shutdown request.");
+            TerminateProcess(GetCurrentProcess(), 0);
+        }
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll")]
+        private static extern bool TerminateProcess(IntPtr processHandle, uint exitCode);
     }
 
     internal sealed class EvalWorkItem

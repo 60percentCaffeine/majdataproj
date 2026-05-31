@@ -1,6 +1,6 @@
 # Add graceful bridge shutdown endpoint
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,10 +8,10 @@ Add an HTTP endpoint that lets integration tests request graceful MajdataPlay sh
 
 ## Acceptance criteria
 
-- [ ] `POST /shutdown` requests graceful game shutdown from inside the running game.
-- [ ] The endpoint returns structured JSON describing whether shutdown was accepted or failed.
-- [ ] Shutdown behavior is safe to call at the end of integration tests.
-- [ ] Harness fallback expectations are documented with the readiness-file PID.
+- [x] `POST /shutdown` requests graceful game shutdown from inside the running game.
+- [x] The endpoint returns structured JSON describing whether shutdown was accepted or failed.
+- [x] Shutdown behavior is safe to call at the end of integration tests.
+- [x] Harness fallback expectations are documented with the readiness-file PID.
 
 ## Blocked by
 
