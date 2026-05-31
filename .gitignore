@@ -15,6 +15,8 @@
 /modtest/bridge/bin/
 /modtest/bridge/obj/
 /modtest/bridge/packages/
+/modtest/repl/bin/
+/modtest/repl/obj/
 /testmod/native/*.dll
 /testmod/native/*.pdb
 /testmod/native/*.lib

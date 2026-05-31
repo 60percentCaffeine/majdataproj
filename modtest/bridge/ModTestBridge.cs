@@ -40,6 +40,10 @@ namespace ModTestBridge
                 _server = new BridgeServer(config, BridgeVersion, () => _mainThreadDispatcherReady, _evalDispatcher);
                 _server.Start();
                 MelonLogger.Msg("ModTestBridge listening on http://" + config.Host + ":" + config.Port + " replEnabled=" + config.ReplEnabled);
+                if (config.ReplEnabled)
+                {
+                    ReplLauncher.LaunchOrReveal(config);
+                }
             }
             catch (Exception ex)
             {
@@ -206,6 +210,8 @@ namespace ModTestBridge
 
                     if (parts[0] == "POST" && parts[1] == "/reset-session")
                     {
+                        int contentLength = ContentLength(headers);
+                        ReadBody(stream, contentLength);
                         _evalDispatcher.ResetSession();
                         WriteJson(stream, 200, "{\"ok\":true,\"phase\":\"reset\",\"sessionVersion\":" + _evalDispatcher.SessionVersion.ToString(CultureInfo.InvariantCulture) + "}");
                         return;
@@ -391,6 +397,35 @@ namespace ModTestBridge
             }
 
             return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+    }
+
+    internal static class ReplLauncher
+    {
+        public static void LaunchOrReveal(BridgeConfig config)
+        {
+            try
+            {
+                string exePath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestReplClient", "ModTestReplClient.exe");
+                if (!File.Exists(exePath))
+                {
+                    MelonLogger.Warning("ModTestBridge REPL client is enabled but not installed at " + exePath);
+                    return;
+                }
+
+                string command = "start \"ModTestBridge REPL\" \"" + exePath + "\" --host " + config.Host + " --port " + config.Port.ToString(CultureInfo.InvariantCulture);
+                ProcessStartInfo start = new ProcessStartInfo();
+                start.FileName = "cmd.exe";
+                start.Arguments = "/c " + command;
+                start.UseShellExecute = false;
+                start.CreateNoWindow = true;
+                Process.Start(start);
+                MelonLogger.Msg("Launched ModTestBridge REPL client.");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning("Failed to launch ModTestBridge REPL client: " + ex.Message);
+            }
         }
     }
 

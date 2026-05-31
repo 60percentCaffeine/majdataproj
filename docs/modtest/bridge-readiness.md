@@ -27,6 +27,8 @@ Example `config.json`:
 
 Invalid configuration fails bridge startup visibly in the MelonLoader log and does not write a fresh readiness file. Supported boolean values include `true`, `false`, `1`, `0`, `yes`, `no`, `on`, and `off`.
 
+When REPL launch is enabled and `Majdata Hub/game/Mods/ModTestReplClient/ModTestReplClient.exe` is installed, bridge startup launches a separate Windows console client connected to the effective host and port. The client sends normal input to `/eval`, so it shares persistent session state. Client commands are `:reset`, `:clear`, `:exit`, and `:help`.
+
 After reading a fresh readiness file, runners should poll:
 
 ```text
