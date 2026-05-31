@@ -192,6 +192,23 @@ namespace ModTestBridge
                         return;
                     }
 
+                    if (parts[0] == "POST" && parts[1] == "/eval")
+                    {
+                        int contentLength = ContentLength(headers);
+                        string body = ReadBody(stream, contentLength);
+                        EvalRequest request = EvalRequest.FromJson(body);
+                        EvalResponse response = _evalDispatcher.EvaluatePersistent(request);
+                        WriteJson(stream, response.StatusCode, response.Json);
+                        return;
+                    }
+
+                    if (parts[0] == "POST" && parts[1] == "/reset-session")
+                    {
+                        _evalDispatcher.ResetSession();
+                        WriteJson(stream, 200, "{\"ok\":true,\"phase\":\"reset\",\"sessionVersion\":" + _evalDispatcher.SessionVersion.ToString(CultureInfo.InvariantCulture) + "}");
+                        return;
+                    }
+
                     WriteJson(stream, 404, "{\"ok\":false,\"error\":\"not found\"}");
                 }
             }
@@ -395,6 +412,10 @@ namespace ModTestBridge
     {
         private readonly SynchronizationContext _mainThreadContext;
         private readonly RoslynEvalService _evalService = new RoslynEvalService();
+        private readonly object _sessionLock = new object();
+        private readonly List<string> _sessionUsings = new List<string>();
+        private readonly List<string> _sessionStatements = new List<string>();
+        private int _sessionVersion;
 
         public EvalDispatcher(SynchronizationContext mainThreadContext)
         {
@@ -403,7 +424,62 @@ namespace ModTestBridge
 
         public EvalResponse EvaluateIsolated(EvalRequest request)
         {
-            EvalWorkItem item = new EvalWorkItem(request, _evalService);
+            EvalWorkItem item = new EvalWorkItem(request, _evalService, EvalMode.Isolated, null);
+            return Evaluate(item, request);
+        }
+
+        public EvalResponse EvaluatePersistent(EvalRequest request)
+        {
+            SessionSnapshot snapshot;
+            lock (_sessionLock)
+            {
+                snapshot = new SessionSnapshot(_sessionUsings.ToArray(), _sessionStatements.ToArray(), _sessionVersion);
+            }
+
+            EvalWorkItem item = new EvalWorkItem(request, _evalService, EvalMode.Persistent, snapshot);
+            EvalResponse response = Evaluate(item, request);
+            if (response.StatusCode == 200 && item.SessionUpdate != null)
+            {
+                lock (_sessionLock)
+                {
+                    if (item.SessionUpdate.UsingDirective != null && !_sessionUsings.Contains(item.SessionUpdate.UsingDirective))
+                    {
+                        _sessionUsings.Add(item.SessionUpdate.UsingDirective);
+                    }
+
+                    if (item.SessionUpdate.Statement != null)
+                    {
+                        _sessionStatements.Add(item.SessionUpdate.Statement);
+                    }
+                }
+            }
+
+            return response;
+        }
+
+        public void ResetSession()
+        {
+            lock (_sessionLock)
+            {
+                _sessionUsings.Clear();
+                _sessionStatements.Clear();
+                _sessionVersion++;
+            }
+        }
+
+        public int SessionVersion
+        {
+            get
+            {
+                lock (_sessionLock)
+                {
+                    return _sessionVersion;
+                }
+            }
+        }
+
+        private EvalResponse Evaluate(EvalWorkItem item, EvalRequest request)
+        {
             if (_mainThreadContext != null)
             {
                 _mainThreadContext.Post(ExecuteOnMainThread, item);
@@ -436,14 +512,19 @@ namespace ModTestBridge
     {
         private readonly EvalRequest _request;
         private readonly RoslynEvalService _evalService;
+        private readonly EvalMode _mode;
+        private readonly SessionSnapshot _sessionSnapshot;
         private readonly ManualResetEvent _done = new ManualResetEvent(false);
 
         public EvalResponse Response;
+        public SessionUpdate SessionUpdate;
 
-        public EvalWorkItem(EvalRequest request, RoslynEvalService evalService)
+        public EvalWorkItem(EvalRequest request, RoslynEvalService evalService, EvalMode mode, SessionSnapshot sessionSnapshot)
         {
             _request = request;
             _evalService = evalService;
+            _mode = mode;
+            _sessionSnapshot = sessionSnapshot;
         }
 
         public bool Wait(int timeoutMs)
@@ -460,7 +541,9 @@ namespace ModTestBridge
 
             try
             {
-                Task<object> task = _evalService.StartIsolated(_request);
+                EvalStartResult startResult = _evalService.Start(_request, _mode, _sessionSnapshot);
+                SessionUpdate = startResult.SessionUpdate;
+                Task<object> task = startResult.Task;
                 task.ContinueWith(delegate(Task<object> completed)
                 {
                     if (completed.IsFaulted)
@@ -490,6 +573,38 @@ namespace ModTestBridge
                 _done.Set();
             }
         }
+    }
+
+    internal enum EvalMode
+    {
+        Isolated,
+        Persistent
+    }
+
+    internal sealed class SessionSnapshot
+    {
+        public readonly string[] Usings;
+        public readonly string[] Statements;
+        public readonly int Version;
+
+        public SessionSnapshot(string[] usings, string[] statements, int version)
+        {
+            Usings = usings;
+            Statements = statements;
+            Version = version;
+        }
+    }
+
+    internal sealed class SessionUpdate
+    {
+        public string UsingDirective;
+        public string Statement;
+    }
+
+    internal sealed class EvalStartResult
+    {
+        public Task<object> Task;
+        public SessionUpdate SessionUpdate;
     }
 
     internal sealed class EvalRequest
@@ -574,9 +689,15 @@ namespace ModTestBridge
 
     internal sealed class RoslynEvalService
     {
-        public Task<object> StartIsolated(EvalRequest request)
+        public EvalStartResult Start(EvalRequest request, EvalMode mode, SessionSnapshot sessionSnapshot)
         {
-            Assembly assembly = Compile(request.Code);
+            CompileResult compileResult = mode == EvalMode.Persistent ? CompilePersistent(request.Code, sessionSnapshot) : CompileIsolated(request.Code);
+            Task<object> task = StartCompiled(compileResult.Assembly);
+            return new EvalStartResult { Task = task, SessionUpdate = compileResult.SessionUpdate };
+        }
+
+        private Task<object> StartCompiled(Assembly assembly)
+        {
             Type type = assembly.GetType("__ModTestBridgeEval.Snippet");
             MethodInfo method = type.GetMethod("Run", BindingFlags.Public | BindingFlags.Static);
             object result = method.Invoke(null, new object[] { new EvalGlobals() });
@@ -592,12 +713,12 @@ namespace ModTestBridge
             return source.Task;
         }
 
-        private Assembly Compile(string code)
+        private CompileResult CompileIsolated(string code)
         {
             CompilationException statementFailure;
             try
             {
-                return CompileWrapped(ExpressionBody(code));
+                return new CompileResult { Assembly = CompileWrapped(null, null, ExpressionBody(code)), SessionUpdate = null };
             }
             catch (CompilationException ex)
             {
@@ -606,11 +727,45 @@ namespace ModTestBridge
 
             try
             {
-                return CompileWrapped(code + "\r\nreturn Task.FromResult<object>(null);");
+                return new CompileResult { Assembly = CompileWrapped(null, null, code + "\r\nreturn Task.FromResult<object>(null);"), SessionUpdate = null };
             }
             catch (CompilationException)
             {
                 throw statementFailure;
+            }
+        }
+
+        private CompileResult CompilePersistent(string code, SessionSnapshot sessionSnapshot)
+        {
+            string trimmed = code == null ? string.Empty : code.Trim();
+            if (IsUsingDirective(trimmed))
+            {
+                string normalizedUsing = NormalizeUsing(trimmed);
+                string[] usingsWithNew = AddUsing(sessionSnapshot.Usings, normalizedUsing);
+                Assembly assembly = CompileWrapped(usingsWithNew, sessionSnapshot.Statements, "return Task.FromResult<object>(null);");
+                return new CompileResult { Assembly = assembly, SessionUpdate = new SessionUpdate { UsingDirective = normalizedUsing } };
+            }
+
+            CompilationException expressionFailure;
+            try
+            {
+                Assembly assembly = CompileWrapped(sessionSnapshot.Usings, sessionSnapshot.Statements, ExpressionBody(code));
+                return new CompileResult { Assembly = assembly, SessionUpdate = null };
+            }
+            catch (CompilationException ex)
+            {
+                expressionFailure = ex;
+            }
+
+            try
+            {
+                string statementBody = code + "\r\nreturn Task.FromResult<object>(null);";
+                Assembly assembly = CompileWrapped(sessionSnapshot.Usings, sessionSnapshot.Statements, statementBody);
+                return new CompileResult { Assembly = assembly, SessionUpdate = new SessionUpdate { Statement = code } };
+            }
+            catch (CompilationException)
+            {
+                throw expressionFailure;
             }
         }
 
@@ -631,24 +786,34 @@ namespace ModTestBridge
             return "return Task.FromResult<object>((object)(" + code + "));";
         }
 
-        private Assembly CompileWrapped(string body)
+        private Assembly CompileWrapped(string[] sessionUsings, string[] sessionStatements, string body)
         {
-            string source = ""
-                + "using System;\r\n"
-                + "using System.Linq;\r\n"
-                + "using System.Collections.Generic;\r\n"
-                + "using System.Reflection;\r\n"
-                + "using System.Threading.Tasks;\r\n"
-                + "using MelonLoader;\r\n"
-                + "using UnityEngine;\r\n"
-                + "using ModTestBridge;\r\n"
-                + "namespace __ModTestBridgeEval {\r\n"
-                + "  public static class Snippet {\r\n"
-                + "    public static Task<object> Run(EvalGlobals globals) {\r\n"
-                + body + "\r\n"
-                + "    }\r\n"
-                + "  }\r\n"
-                + "}\r\n";
+            StringBuilder sourceBuilder = new StringBuilder();
+            AppendDefaultUsings(sourceBuilder);
+            if (sessionUsings != null)
+            {
+                for (int i = 0; i < sessionUsings.Length; i++)
+                {
+                    sourceBuilder.Append(sessionUsings[i]);
+                    sourceBuilder.Append("\r\n");
+                }
+            }
+
+            sourceBuilder.Append("namespace __ModTestBridgeEval {\r\n");
+            sourceBuilder.Append("  public static class Snippet {\r\n");
+            sourceBuilder.Append("    public static Task<object> Run(EvalGlobals globals) {\r\n");
+            if (sessionStatements != null)
+            {
+                for (int i = 0; i < sessionStatements.Length; i++)
+                {
+                    sourceBuilder.Append(sessionStatements[i]);
+                    sourceBuilder.Append("\r\n");
+                }
+            }
+
+            sourceBuilder.Append(body);
+            sourceBuilder.Append("\r\n    }\r\n  }\r\n}\r\n");
+            string source = sourceBuilder.ToString();
 
             string evalDir = Path.Combine(BridgeConfig.ConfigDirectory, "eval");
             Directory.CreateDirectory(evalDir);
@@ -665,6 +830,44 @@ namespace ModTestBridge
 
             byte[] bytes = File.ReadAllBytes(outputPath);
             return Assembly.Load(bytes);
+        }
+
+        private static void AppendDefaultUsings(StringBuilder sourceBuilder)
+        {
+            sourceBuilder.Append("using System;\r\n");
+            sourceBuilder.Append("using System.Linq;\r\n");
+            sourceBuilder.Append("using System.Collections.Generic;\r\n");
+            sourceBuilder.Append("using System.Reflection;\r\n");
+            sourceBuilder.Append("using System.Threading.Tasks;\r\n");
+            sourceBuilder.Append("using MelonLoader;\r\n");
+            sourceBuilder.Append("using UnityEngine;\r\n");
+            sourceBuilder.Append("using ModTestBridge;\r\n");
+        }
+
+        private static bool IsUsingDirective(string code)
+        {
+            return code.StartsWith("using ") && code.EndsWith(";");
+        }
+
+        private static string NormalizeUsing(string code)
+        {
+            return code.Trim();
+        }
+
+        private static string[] AddUsing(string[] current, string value)
+        {
+            for (int i = 0; i < current.Length; i++)
+            {
+                if (current[i] == value)
+                {
+                    return current;
+                }
+            }
+
+            string[] next = new string[current.Length + 1];
+            Array.Copy(current, next, current.Length);
+            next[current.Length] = value;
+            return next;
         }
 
         private static string RunRoslynCompiler(string sourcePath, string outputPath)
@@ -801,6 +1004,12 @@ namespace ModTestBridge
             builder.Append("]");
             return builder.ToString();
         }
+    }
+
+    internal sealed class CompileResult
+    {
+        public Assembly Assembly;
+        public SessionUpdate SessionUpdate;
     }
 
     internal sealed class CompilationException : Exception

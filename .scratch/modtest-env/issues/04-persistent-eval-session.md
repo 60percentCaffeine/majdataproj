@@ -1,6 +1,6 @@
 # Add persistent eval session resettable through HTTP
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,10 +8,10 @@ Add REPL-style C# evaluation backed by a persistent Roslyn session, plus an endp
 
 ## Acceptance criteria
 
-- [ ] `POST /eval` evaluates code using a persistent Roslyn session by default.
-- [ ] Variables/imports created by one `/eval` request can be used by a later `/eval` request.
-- [ ] `POST /reset-session` clears the persistent session and returns structured success or error JSON.
-- [ ] `/eval` and `/eval-isolated` remain behaviorally distinct and covered by tests.
+- [x] `POST /eval` evaluates code using a persistent Roslyn session by default.
+- [x] Variables/imports created by one `/eval` request can be used by a later `/eval` request.
+- [x] `POST /reset-session` clears the persistent session and returns structured success or error JSON.
+- [x] `/eval` and `/eval-isolated` remain behaviorally distinct and covered by tests.
 
 ## Blocked by
 
