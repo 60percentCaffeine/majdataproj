@@ -9,3 +9,17 @@ powershell.exe -Command "Start-Process '.\start-controller.bat'"
 ```
 
 you are running in WSL but the game/mod is for Windows
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The local markdown tracker uses the default skill triage labels, including `ready-for-agent` for AFK-ready issues. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo; read root `CONTEXT.md` and `docs/adr/` when present. See `docs/agents/domain.md`.
