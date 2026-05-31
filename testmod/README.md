@@ -101,3 +101,174 @@ Expected lines:
 TestMod v1.0.0
 [TestMod] Loaded
 ```
+
+## Fresh Majdata Install
+
+These steps assume a clean Majdata install at:
+
+```text
+C:\Users\user0-pc\majdataproj\Majdata Hub\game
+```
+
+and this repo checked out at:
+
+```text
+C:\Users\user0-pc\majdataproj
+```
+
+### 1. Install Build Prerequisites
+
+On Windows, install the .NET SDK so `C:\Program Files\dotnet\dotnet.exe` exists. The tested machine used .NET SDK 9.0.200.
+
+In WSL, install the MinGW cross compiler used for `mlhook1.dll`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y mingw-w64
+```
+
+### 2. Install MelonLoader v0.4.3
+
+Download:
+
+```text
+https://github.com/LavaGang/MelonLoader/releases/download/v0.4.3/MelonLoader.x64.zip
+```
+
+Extract it somewhere temporary. Copy only the extracted `MelonLoader` folder into the game root:
+
+```text
+Majdata Hub/game/MelonLoader
+```
+
+Do not install or keep MelonLoader's `version.dll` in the game root for this setup. This Majdata install did not originally have a local `version.dll`, and Windows did not load MelonLoader's local `version.dll` proxy for this game.
+
+### 3. Provide Mono.Cecil For The Patcher
+
+`patch-melonloader-043.ps1` needs `Mono.Cecil.dll` locally at:
+
+```text
+testmod/tools/Mono.Cecil.dll
+```
+
+The tested setup used `Mono.Cecil.dll` from MelonLoader v0.5.7:
+
+```text
+https://github.com/LavaGang/MelonLoader/releases/download/v0.5.7/MelonLoader.x64.zip
+```
+
+Extract that archive somewhere temporary and copy:
+
+```text
+MelonLoader/Mono.Cecil.dll
+```
+
+to:
+
+```text
+testmod/tools/Mono.Cecil.dll
+```
+
+The DLL is intentionally gitignored because it is an external binary.
+
+### 4. Build And Install The Native Proxy
+
+From WSL at the project root:
+
+```bash
+./testmod/build-native.sh
+```
+
+This builds:
+
+```text
+testmod/native/mlhook1.dll
+```
+
+and copies it to:
+
+```text
+Majdata Hub/game/mlhook1.dll
+```
+
+`mlhook1.dll` forwards the three `VERSION.dll` functions Unity imports to the real System32 `VERSION.dll`, then loads MelonLoader's v0.4.3 bootstrap.
+
+### 5. Patch UnityPlayer.dll To Load mlhook1.dll
+
+Back up `UnityPlayer.dll` first:
+
+```bash
+mkdir -p backups
+cp -a "Majdata Hub/game/UnityPlayer.dll" "backups/UnityPlayer.$(date +%Y%m%d-%H%M%S).dll"
+```
+
+Patch the import name:
+
+```bash
+perl -0pi -e 's/VERSION\.dll/mlhook1.dll/' "Majdata Hub/game/UnityPlayer.dll"
+```
+
+This works because `VERSION.dll` and `mlhook1.dll` are the same string length. Do not run this repeatedly against the same file unless you first verify the import table.
+
+Verify:
+
+```bash
+objdump -p "Majdata Hub/game/UnityPlayer.dll" | rg "DLL Name: (VERSION|mlhook1)"
+```
+
+Expected:
+
+```text
+DLL Name: mlhook1.dll
+```
+
+### 6. Patch MelonLoader And Install TestMod
+
+From the project root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\install.ps1"
+```
+
+This:
+
+- patches `Majdata Hub/game/MelonLoader/MelonLoader.dll` for MajdataPlay's Mono profile;
+- builds `testmod/bin/TestMod.dll`;
+- copies it to `Majdata Hub/game/Mods/TestMod.dll`.
+
+### 7. Start And Verify
+
+From `Majdata Hub/game`:
+
+```powershell
+powershell.exe -Command "Start-Process '.\start-controller.bat'"
+```
+
+Then check:
+
+```text
+Majdata Hub/game/MelonLoader/Latest.log
+```
+
+Expected:
+
+```text
+MelonLoader v0.4.3 Open-Beta
+1 Mod Loaded
+TestMod v1.0.0
+[TestMod] Loaded
+```
+
+### Restore UnityPlayer.dll
+
+To undo the import patch, stop the game and copy the backup over:
+
+```bash
+cp -f backups/UnityPlayer.YYYYMMDD-HHMMSS.dll "Majdata Hub/game/UnityPlayer.dll"
+```
+
+Then remove the MelonLoader/test files from the game root if desired:
+
+```bash
+rm -rf "Majdata Hub/game/MelonLoader" "Majdata Hub/game/Mods/TestMod.dll" "Majdata Hub/game/mlhook1.dll"
+```
