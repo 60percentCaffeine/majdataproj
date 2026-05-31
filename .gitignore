@@ -1,0 +1,31 @@
+# Game install and hub binaries
+/Majdata Hub/
+
+# Reference source drops and external repositories
+/references/
+
+# Runtime backups and local recovery copies
+/backups/
+
+# Downloaded release archives or extracted tool payloads
+/downloads/
+
+# Built mod/native binaries
+/testmod/bin/
+/testmod/native/*.dll
+/testmod/native/*.pdb
+/testmod/native/*.lib
+/testmod/native/*.exp
+/testmod/tools/*.dll
+
+# Logs and crash dumps
+*.log
+*.dmp
+*.crash
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
