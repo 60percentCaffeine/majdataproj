@@ -1,6 +1,6 @@
 # Add sample integration test command for real MajdataPlay
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,11 +8,11 @@ Add a sample integration test command that builds and installs the bridge plus s
 
 ## Acceptance criteria
 
-- [ ] `test-integration.ps1` builds the bridge, REPL client, TestClient/TestHarness, and sample mod.
-- [ ] The command installs required DLLs into `Majdata Hub/game/Mods`.
-- [ ] The command launches `start-controller.bat`, waits for readiness, and polls `/health`.
-- [ ] xUnit integration tests assert at least one invariant through `/eval` or `/eval-isolated`.
-- [ ] The command requests shutdown, applies the safe PID fallback if needed, collects logs, and returns nonzero on failure.
+- [x] `test-integration.ps1` builds the bridge, REPL client, TestClient/TestHarness, and sample mod.
+- [x] The command installs required DLLs into `Majdata Hub/game/Mods`.
+- [x] The command launches `start-controller.bat`, waits for readiness, and polls `/health`.
+- [x] xUnit integration tests assert at least one invariant through `/eval` or `/eval-isolated`.
+- [x] The command requests shutdown, applies the safe PID fallback if needed, collects logs, and returns nonzero on failure.
 
 ## Blocked by
 

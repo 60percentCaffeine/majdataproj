@@ -1391,6 +1391,16 @@ namespace ModTestBridge
                 references.Add(bridgeAssemblyPath);
             }
 
+            string modsDir = Path.Combine(Environment.CurrentDirectory, "Mods");
+            if (Directory.Exists(modsDir))
+            {
+                string[] modAssemblies = Directory.GetFiles(modsDir, "*.dll");
+                for (int i = 0; i < modAssemblies.Length; i++)
+                {
+                    AddReferenceIfExists(references, modAssemblies[i]);
+                }
+            }
+
             string managedDir = Path.Combine(Environment.CurrentDirectory, "MajdataPlay_Data", "Managed");
             AddReferenceIfExists(references, Path.Combine(managedDir, "System.Threading.Tasks.dll"));
             AddReferenceIfExists(references, Path.Combine(managedDir, "System.Threading.Tasks.Extensions.dll"));
@@ -1477,6 +1487,12 @@ namespace ModTestBridge
         {
             AssemblyName name = new AssemblyName(args.Name);
             string path = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestBridgeLib", name.Name + ".dll");
+            if (File.Exists(path))
+            {
+                return Assembly.LoadFrom(path);
+            }
+
+            path = Path.Combine(Environment.CurrentDirectory, "Mods", name.Name + ".dll");
             if (File.Exists(path))
             {
                 return Assembly.LoadFrom(path);

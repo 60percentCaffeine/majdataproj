@@ -24,6 +24,10 @@
 /modtest/repl/obj/
 /modtest/harness/bin/
 /modtest/harness/obj/
+/modtest/integration/bin/
+/modtest/integration/obj/
+/modtest-artifacts/
+/.scratch/modtest-artifacts/
 /testmod/native/*.dll
 /testmod/native/*.pdb
 /testmod/native/*.lib
