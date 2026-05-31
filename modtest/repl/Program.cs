@@ -11,8 +11,8 @@ namespace ModTestReplClient
         private static int Main(string[] args)
         {
             BridgeEndpoint endpoint = BridgeEndpoint.FromArgs(args);
-            Console.Title = "ModTestBridge REPL " + endpoint.BaseUrl;
-            Console.WriteLine("ModTestBridge REPL connected to " + endpoint.BaseUrl);
+            Console.Title = "Test Hook Mod REPL " + endpoint.BaseUrl;
+            Console.WriteLine("Test Hook Mod REPL connected to " + endpoint.BaseUrl);
             Console.WriteLine("Type :help for commands.");
 
             while (true)
@@ -60,7 +60,7 @@ namespace ModTestReplClient
                     Console.Clear();
                     return true;
                 case ":help":
-                    Console.WriteLine(":reset clears the persistent bridge session");
+                    Console.WriteLine(":reset clears the persistent test hook session");
                     Console.WriteLine(":clear clears this console");
                     Console.WriteLine(":exit exits the client");
                     Console.WriteLine(":help shows commands");

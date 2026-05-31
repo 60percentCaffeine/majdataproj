@@ -110,7 +110,7 @@ namespace ModTestHarness
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
             }
 
-            throw new TimeoutException("Timed out waiting for fresh ModTestBridge readiness file.");
+            throw new TimeoutException("Timed out waiting for fresh TestHookMod readiness file.");
         }
 
         private static bool IsFresh(BridgeReadyFile ready, DateTimeOffset launchedAt)
@@ -145,7 +145,7 @@ namespace ModTestHarness
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
             }
 
-            throw new TimeoutException("Timed out polling ModTestBridge /health.");
+            throw new TimeoutException("Timed out polling TestHookMod /health.");
         }
 
         private static void CopyIfExists(string source, string destination)

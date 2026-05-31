@@ -15,13 +15,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(ModTestBridge.ModTestBridgeMod), "ModTestBridge", ModTestBridge.ModTestBridgeMod.BridgeVersion, "user0")]
+[assembly: MelonInfo(typeof(ModTestBridge.TestHookMod), "Test Hook Mod", ModTestBridge.TestHookMod.BridgeVersion, "user0")]
 [assembly: MelonGame]
 [assembly: HarmonyDontPatchAll]
 
 namespace ModTestBridge
 {
-    public sealed class ModTestBridgeMod : MelonMod
+    public sealed class TestHookMod : MelonMod
     {
         public const string BridgeVersion = "0.1.0";
 
@@ -40,7 +40,7 @@ namespace ModTestBridge
                 _mainThreadDispatcherReady = true;
                 _server = new BridgeServer(config, BridgeVersion, () => _mainThreadDispatcherReady, _evalDispatcher);
                 _server.Start();
-                MelonLogger.Msg("ModTestBridge listening on http://" + config.Host + ":" + config.Port + " replEnabled=" + config.ReplEnabled);
+                MelonLogger.Msg("Test Hook Mod listening on http://" + config.Host + ":" + config.Port + " replEnabled=" + config.ReplEnabled);
                 if (config.ReplEnabled)
                 {
                     ReplLauncher.LaunchOrReveal(config);
@@ -48,7 +48,7 @@ namespace ModTestBridge
             }
             catch (Exception ex)
             {
-                MelonLogger.Error("ModTestBridge failed to start: " + ex);
+                MelonLogger.Error("Test Hook Mod failed to start: " + ex);
                 throw;
             }
         }
@@ -109,7 +109,7 @@ namespace ModTestBridge
 
             _acceptThread = new Thread(AcceptLoop);
             _acceptThread.IsBackground = true;
-            _acceptThread.Name = "ModTestBridge HTTP";
+            _acceptThread.Name = "Test Hook Mod HTTP";
             _acceptThread.Start();
         }
 
@@ -143,7 +143,7 @@ namespace ModTestBridge
                 {
                     if (!_stopping)
                     {
-                        MelonLogger.Warning("ModTestBridge accept loop socket error");
+                        MelonLogger.Warning("Test Hook Mod accept loop socket error");
                     }
                 }
                 catch (ObjectDisposedException)
@@ -154,7 +154,7 @@ namespace ModTestBridge
                 {
                     if (!_stopping)
                     {
-                        MelonLogger.Error("ModTestBridge accept loop failed: " + ex);
+                        MelonLogger.Error("Test Hook Mod accept loop failed: " + ex);
                     }
                 }
             }
@@ -234,7 +234,7 @@ namespace ModTestBridge
             {
                 if (!_stopping)
                 {
-                    MelonLogger.Warning("ModTestBridge request failed: " + ex.Message);
+                    MelonLogger.Warning("Test Hook Mod request failed: " + ex.Message);
                 }
             }
             finally
@@ -419,22 +419,22 @@ namespace ModTestBridge
                 string exePath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestReplClient", "ModTestReplClient.exe");
                 if (!File.Exists(exePath))
                 {
-                    MelonLogger.Warning("ModTestBridge REPL client is enabled but not installed at " + exePath);
+                    MelonLogger.Warning("Test Hook Mod REPL client is enabled but not installed at " + exePath);
                     return;
                 }
 
-                string command = "start \"ModTestBridge REPL\" \"" + exePath + "\" --host " + config.Host + " --port " + config.Port.ToString(CultureInfo.InvariantCulture);
+                string command = "start \"Test Hook Mod REPL\" \"" + exePath + "\" --host " + config.Host + " --port " + config.Port.ToString(CultureInfo.InvariantCulture);
                 ProcessStartInfo start = new ProcessStartInfo();
                 start.FileName = "cmd.exe";
                 start.Arguments = "/c " + command;
                 start.UseShellExecute = false;
                 start.CreateNoWindow = true;
                 Process.Start(start);
-                MelonLogger.Msg("Launched ModTestBridge REPL client.");
+                MelonLogger.Msg("Launched Test Hook Mod REPL client.");
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning("Failed to launch ModTestBridge REPL client: " + ex.Message);
+                MelonLogger.Warning("Failed to launch Test Hook Mod REPL client: " + ex.Message);
             }
         }
     }
@@ -443,7 +443,7 @@ namespace ModTestBridge
     {
         public string BridgeVersion
         {
-            get { return ModTestBridgeMod.BridgeVersion; }
+            get { return TestHookMod.BridgeVersion; }
         }
     }
 
@@ -540,7 +540,7 @@ namespace ModTestBridge
 
                 Thread exitThread = new Thread(ExitProcessAfterGracePeriod);
                 exitThread.IsBackground = true;
-                exitThread.Name = "ModTestBridge shutdown fallback";
+                exitThread.Name = "Test Hook Mod shutdown fallback";
                 exitThread.Start();
                 return true;
             }
@@ -582,7 +582,7 @@ namespace ModTestBridge
 
         private static void ShutdownOnMainThread(object state)
         {
-            MelonLogger.Msg("ModTestBridge shutdown requested.");
+            MelonLogger.Msg("Test Hook Mod shutdown requested.");
             Type applicationType = typeof(UnityEngine.Application);
             MethodInfo quit = applicationType.GetMethod("Quit", new Type[0]);
             if (quit == null)
@@ -608,7 +608,7 @@ namespace ModTestBridge
         private static void ExitProcessAfterGracePeriod()
         {
             Thread.Sleep(2000);
-            MelonLogger.Msg("ModTestBridge forcing process exit after graceful shutdown request.");
+            MelonLogger.Msg("Test Hook Mod forcing process exit after graceful shutdown request.");
             TerminateProcess(GetCurrentProcess(), 0);
         }
 
@@ -1385,10 +1385,16 @@ namespace ModTestBridge
                 }
             }
 
-            string bridgeAssemblyPath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestBridge.dll");
+            string bridgeAssemblyPath = Path.Combine(Environment.CurrentDirectory, "Mods", "TestHookMod.dll");
             if (File.Exists(bridgeAssemblyPath) && !references.Contains(bridgeAssemblyPath))
             {
                 references.Add(bridgeAssemblyPath);
+            }
+
+            string legacyBridgeAssemblyPath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestBridge.dll");
+            if (File.Exists(legacyBridgeAssemblyPath) && !references.Contains(legacyBridgeAssemblyPath))
+            {
+                references.Add(legacyBridgeAssemblyPath);
             }
 
             string modsDir = Path.Combine(Environment.CurrentDirectory, "Mods");

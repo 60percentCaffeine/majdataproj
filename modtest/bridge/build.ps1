@@ -9,7 +9,7 @@ if (-not (Test-Path (Join-Path $MelonLoaderDir "MelonLoader.dll"))) {
 }
 
 $OutputDir = Join-Path $PSScriptRoot "bin"
-$OutputDll = Join-Path $OutputDir "ModTestBridge.dll"
+$OutputDll = Join-Path $OutputDir "TestHookMod.dll"
 $CscPath = "C:\Program Files\dotnet\sdk\9.0.200\Roslyn\bincore\csc.dll"
 $DotnetPath = "C:\Program Files\dotnet\dotnet.exe"
 

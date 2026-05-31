@@ -20,7 +20,7 @@ The installed log line appears as:
 - `build.ps1`: builds `bin/TestMod.dll` with the Windows .NET SDK Roslyn compiler.
 - `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it plus `TestMod.Core.dll` to `Majdata Hub/game/Mods`.
 - `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `testmod/artifacts/unit`.
-- `test-integration.ps1`: builds and installs the bridge, REPL client, harness, and sample mod, then runs real-game xUnit integration tests.
+- `test-integration.ps1`: builds and installs the test hook, REPL client, harness, and sample mod, then runs real-game xUnit integration tests.
 - `test-all.ps1`: runs unit coverage and real-game integration tests in sequence.
 - `native/mlhook1.c`: small `VERSION.dll` import proxy used because this game did not load MelonLoader's original local `version.dll` proxy.
 - `build-native.sh`: rebuilds `native/mlhook1.dll` and installs it to `Majdata Hub/game/mlhook1.dll`.

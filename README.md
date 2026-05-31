@@ -1,12 +1,12 @@
 # MajdataPlay Mod Test Project
 
-This repo contains a working MajdataPlay MelonLoader mod setup, a sample mod, and a local test/debug bridge for building and testing mods against the real Windows game from WSL.
+This repo contains a working MajdataPlay MelonLoader mod setup, a sample mod, and a local test/debug hook for building and testing mods against the real Windows game from WSL.
 
 ## Layout
 
 - `testmod/`: sample MelonLoader mod, pure core library, unit tests, install scripts, and per-mod test commands.
-- `modtest/bridge/`: in-game HTTP bridge mod with health, eval, persistent session, serialization, and shutdown endpoints.
-- `modtest/repl/`: separate Windows console REPL client for the bridge.
+- `modtest/bridge/`: in-game HTTP test hook mod with health, eval, persistent session, serialization, and shutdown endpoints.
+- `modtest/repl/`: separate Windows console REPL client for the test hook.
 - `modtest/harness/`: host-side `TestClient` and `TestHarness` helpers for integration tests.
 - `modtest/integration/`: xUnit integration tests that launch the real game.
 - `Majdata Hub/game/`: local MajdataPlay install used for runtime testing.
