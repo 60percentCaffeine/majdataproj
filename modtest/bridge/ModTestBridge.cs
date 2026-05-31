@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using MelonLoader;
 
@@ -18,9 +19,6 @@ namespace ModTestBridge
     {
         public const string BridgeVersion = "0.1.0";
 
-        private const string Host = "127.0.0.1";
-        private const int Port = 17443;
-
         private BridgeServer _server;
         private volatile bool _mainThreadDispatcherReady;
 
@@ -28,10 +26,12 @@ namespace ModTestBridge
         {
             try
             {
+                BridgeConfig.DeleteReadinessFile();
+                BridgeConfig config = BridgeConfig.Load();
                 _mainThreadDispatcherReady = true;
-                _server = new BridgeServer(Host, Port, BridgeVersion, () => _mainThreadDispatcherReady);
+                _server = new BridgeServer(config, BridgeVersion, () => _mainThreadDispatcherReady);
                 _server.Start();
-                MelonLogger.Msg("ModTestBridge listening on http://" + Host + ":" + Port);
+                MelonLogger.Msg("ModTestBridge listening on http://" + config.Host + ":" + config.Port + " replEnabled=" + config.ReplEnabled);
             }
             catch (Exception ex)
             {
@@ -60,6 +60,7 @@ namespace ModTestBridge
     {
         private readonly string _host;
         private readonly int _port;
+        private readonly bool _replEnabled;
         private readonly string _bridgeVersion;
         private readonly Func<bool> _mainThreadDispatcherReady;
         private readonly object _stopLock = new object();
@@ -69,10 +70,11 @@ namespace ModTestBridge
         private volatile bool _stopping;
         private string _startedAt;
 
-        public BridgeServer(string host, int port, string bridgeVersion, Func<bool> mainThreadDispatcherReady)
+        public BridgeServer(BridgeConfig config, string bridgeVersion, Func<bool> mainThreadDispatcherReady)
         {
-            _host = host;
-            _port = port;
+            _host = config.Host;
+            _port = config.Port;
+            _replEnabled = config.ReplEnabled;
             _bridgeVersion = bridgeVersion;
             _mainThreadDispatcherReady = mainThreadDispatcherReady;
         }
@@ -189,13 +191,16 @@ namespace ModTestBridge
                 + "\"ok\":true,"
                 + "\"bridgeVersion\":\"" + JsonEscape(_bridgeVersion) + "\","
                 + "\"pid\":" + CurrentPid().ToString(CultureInfo.InvariantCulture) + ","
+                + "\"host\":\"" + JsonEscape(_host) + "\","
+                + "\"port\":" + _port.ToString(CultureInfo.InvariantCulture) + ","
+                + "\"replEnabled\":" + (_replEnabled ? "true" : "false") + ","
                 + "\"mainThreadDispatcherReady\":" + (_mainThreadDispatcherReady() ? "true" : "false")
                 + "}";
         }
 
         private void WriteReadinessFile()
         {
-            string dir = Path.Combine(Environment.CurrentDirectory, "UserData", "ModTestBridge");
+            string dir = BridgeConfig.ConfigDirectory;
             Directory.CreateDirectory(dir);
 
             string path = Path.Combine(dir, "ready.json");
@@ -204,6 +209,7 @@ namespace ModTestBridge
                 + "\"pid\":" + CurrentPid().ToString(CultureInfo.InvariantCulture) + ","
                 + "\"host\":\"" + JsonEscape(_host) + "\","
                 + "\"port\":" + _port.ToString(CultureInfo.InvariantCulture) + ","
+                + "\"replEnabled\":" + (_replEnabled ? "true" : "false") + ","
                 + "\"startedAt\":\"" + JsonEscape(_startedAt) + "\","
                 + "\"bridgeVersion\":\"" + JsonEscape(_bridgeVersion) + "\""
                 + "}";
@@ -287,6 +293,242 @@ namespace ModTestBridge
             }
 
             return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+    }
+
+    internal sealed class BridgeConfig
+    {
+        public const string DefaultHost = "127.0.0.1";
+        public const int DefaultPort = 17443;
+        public const bool DefaultReplEnabled = true;
+
+        public string Host;
+        public int Port;
+        public bool ReplEnabled;
+
+        public static string ConfigDirectory
+        {
+            get { return Path.Combine(Environment.CurrentDirectory, "UserData", "ModTestBridge"); }
+        }
+
+        public static BridgeConfig Load()
+        {
+            BridgeConfig config = new BridgeConfig();
+            config.Host = DefaultHost;
+            config.Port = DefaultPort;
+            config.ReplEnabled = DefaultReplEnabled;
+
+            config.ApplyConfigFile();
+            config.ApplyEnvironment();
+            config.ApplyCommandLine(Environment.GetCommandLineArgs());
+            config.Validate("effective configuration");
+            return config;
+        }
+
+        public static void DeleteReadinessFile()
+        {
+            string path = Path.Combine(ConfigDirectory, "ready.json");
+            string tempPath = path + ".tmp";
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+
+        private void ApplyConfigFile()
+        {
+            string path = Path.Combine(ConfigDirectory, "config.json");
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            string json = File.ReadAllText(path);
+            string host = FindJsonString(json, "host");
+            string port = FindJsonScalar(json, "port");
+            string repl = FindFirstJsonScalar(json, new string[] { "replEnabled", "launchRepl", "repl" });
+
+            if (host != null)
+            {
+                Host = host;
+            }
+
+            if (port != null)
+            {
+                Port = ParsePort(port, "UserData/ModTestBridge/config.json port");
+            }
+
+            if (repl != null)
+            {
+                ReplEnabled = ParseBool(repl, "UserData/ModTestBridge/config.json REPL setting");
+            }
+        }
+
+        private void ApplyEnvironment()
+        {
+            string host = Environment.GetEnvironmentVariable("MODTEST_BRIDGE_HOST");
+            string port = Environment.GetEnvironmentVariable("MODTEST_BRIDGE_PORT");
+            string repl = Environment.GetEnvironmentVariable("MODTEST_BRIDGE_REPL");
+
+            if (!IsNullOrEmpty(host))
+            {
+                Host = host;
+            }
+
+            if (!IsNullOrEmpty(port))
+            {
+                Port = ParsePort(port, "MODTEST_BRIDGE_PORT");
+            }
+
+            if (!IsNullOrEmpty(repl))
+            {
+                ReplEnabled = ParseBool(repl, "MODTEST_BRIDGE_REPL");
+            }
+        }
+
+        private void ApplyCommandLine(string[] args)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                string arg = args[i];
+                if (arg == null)
+                {
+                    continue;
+                }
+
+                if (arg == "--modtest-no-repl")
+                {
+                    ReplEnabled = false;
+                    continue;
+                }
+
+                if (arg == "--modtest-repl")
+                {
+                    ReplEnabled = true;
+                    continue;
+                }
+
+                string host = ReadOptionValue(args, ref i, "--modtest-host", arg);
+                if (host != null)
+                {
+                    Host = host;
+                    continue;
+                }
+
+                string port = ReadOptionValue(args, ref i, "--modtest-port", arg);
+                if (port != null)
+                {
+                    Port = ParsePort(port, "--modtest-port");
+                    continue;
+                }
+            }
+        }
+
+        private void Validate(string source)
+        {
+            IPAddress ignored;
+            if (!IPAddress.TryParse(Host, out ignored))
+            {
+                throw new InvalidOperationException(source + " has invalid host '" + Host + "'. Use an IP address such as 127.0.0.1.");
+            }
+
+            if (Port < 1 || Port > 65535)
+            {
+                throw new InvalidOperationException(source + " has invalid port '" + Port.ToString(CultureInfo.InvariantCulture) + "'.");
+            }
+        }
+
+        private static string ReadOptionValue(string[] args, ref int index, string optionName, string currentArg)
+        {
+            string prefix = optionName + "=";
+            if (currentArg.StartsWith(prefix))
+            {
+                return currentArg.Substring(prefix.Length);
+            }
+
+            if (currentArg != optionName)
+            {
+                return null;
+            }
+
+            if (index + 1 >= args.Length || args[index + 1].StartsWith("--"))
+            {
+                throw new InvalidOperationException(optionName + " requires a value.");
+            }
+
+            index++;
+            return args[index];
+        }
+
+        private static int ParsePort(string value, string source)
+        {
+            int port;
+            if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out port) || port < 1 || port > 65535)
+            {
+                throw new InvalidOperationException(source + " must be an integer between 1 and 65535.");
+            }
+
+            return port;
+        }
+
+        private static bool ParseBool(string value, string source)
+        {
+            string normalized = value.Trim().ToLower(CultureInfo.InvariantCulture);
+            if (normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on" || normalized == "enabled")
+            {
+                return true;
+            }
+
+            if (normalized == "false" || normalized == "0" || normalized == "no" || normalized == "off" || normalized == "disabled")
+            {
+                return false;
+            }
+
+            throw new InvalidOperationException(source + " must be true or false.");
+        }
+
+        private static string FindFirstJsonScalar(string json, string[] names)
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                string value = FindJsonScalar(json, names[i]);
+                if (value != null)
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+
+        private static string FindJsonString(string json, string name)
+        {
+            Regex regex = new Regex("\"" + Regex.Escape(name) + "\"\\s*:\\s*\"([^\"]*)\"", RegexOptions.IgnoreCase);
+            Match match = regex.Match(json);
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        private static string FindJsonScalar(string json, string name)
+        {
+            string stringValue = FindJsonString(json, name);
+            if (stringValue != null)
+            {
+                return stringValue;
+            }
+
+            Regex regex = new Regex("\"" + Regex.Escape(name) + "\"\\s*:\\s*([^,}\\s]+)", RegexOptions.IgnoreCase);
+            Match match = regex.Match(json);
+            return match.Success ? match.Groups[1].Value : null;
+        }
+
+        private static bool IsNullOrEmpty(string value)
+        {
+            return value == null || value.Length == 0;
         }
     }
 }
