@@ -3,9 +3,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Collections.Generic;
+using System.Collections;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -556,7 +558,7 @@ namespace ModTestBridge
                     }
                     else
                     {
-                        Response = EvalResponse.Success(completed.Result);
+                        Response = EvalResponse.Success(completed.Result, _request);
                     }
 
                     _done.Set();
@@ -636,12 +638,32 @@ namespace ModTestBridge
         public int StatusCode;
         public string Json;
 
-        public static EvalResponse Success(object value)
+        public static EvalResponse Success(object value, EvalRequest request)
+        {
+            try
+            {
+                return new EvalResponse
+                {
+                    StatusCode = 200,
+                    Json = "{\"ok\":true,\"phase\":\"execution\",\"result\":" + BoundedJsonSerializer.Serialize(value, request.MaxDepth, request.MaxResponseBytes) + "}"
+                };
+            }
+            catch (SerializationLimitException ex)
+            {
+                return SerializationError(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                return SerializationError(ex.Message);
+            }
+        }
+
+        public static EvalResponse SerializationError(string message)
         {
             return new EvalResponse
             {
-                StatusCode = 200,
-                Json = "{\"ok\":true,\"phase\":\"execution\",\"result\":" + JsonTools.SerializeSimpleValue(value) + "}"
+                StatusCode = 500,
+                Json = "{\"ok\":false,\"phase\":\"serialization\",\"error\":{\"type\":\"SerializationException\",\"message\":\"" + JsonTools.Escape(message) + "\"}}"
             };
         }
 
@@ -684,6 +706,310 @@ namespace ModTestBridge
                 StatusCode = 408,
                 Json = "{\"ok\":false,\"phase\":\"execution\",\"error\":{\"type\":\"TimeoutException\",\"message\":\"Evaluation timed out.\"}}"
             };
+        }
+    }
+
+    internal sealed class SerializationLimitException : Exception
+    {
+        public SerializationLimitException(string message)
+            : base(message)
+        {
+        }
+    }
+
+    internal sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+    {
+        public new bool Equals(object x, object y)
+        {
+            return object.ReferenceEquals(x, y);
+        }
+
+        public int GetHashCode(object obj)
+        {
+            return RuntimeHelpers.GetHashCode(obj);
+        }
+    }
+
+    internal sealed class BoundedJsonSerializer
+    {
+        private readonly int _maxDepth;
+        private readonly int _maxResponseBytes;
+        private readonly StringBuilder _builder = new StringBuilder();
+        private readonly Dictionary<object, int> _seen = new Dictionary<object, int>(new ReferenceEqualityComparer());
+        private int _nextId = 1;
+
+        private BoundedJsonSerializer(int maxDepth, int maxResponseBytes)
+        {
+            _maxDepth = maxDepth <= 0 ? 4 : maxDepth;
+            _maxResponseBytes = maxResponseBytes <= 0 ? 65536 : maxResponseBytes;
+        }
+
+        public static string Serialize(object value, int maxDepth, int maxResponseBytes)
+        {
+            BoundedJsonSerializer serializer = new BoundedJsonSerializer(maxDepth, maxResponseBytes);
+            serializer.WriteValue(value, 0);
+            return serializer._builder.ToString();
+        }
+
+        private void WriteValue(object value, int depth)
+        {
+            CheckSize();
+            if (value == null)
+            {
+                Append("null");
+                return;
+            }
+
+            Type type = value.GetType();
+            if (IsPrimitiveLike(type))
+            {
+                WritePrimitive(value);
+                return;
+            }
+
+            if (IsUnsupported(type, value))
+            {
+                WriteUnsupported(value, type);
+                return;
+            }
+
+            if (depth >= _maxDepth)
+            {
+                throw new SerializationLimitException("Maximum serialization depth exceeded.");
+            }
+
+            int existingId;
+            if (_seen.TryGetValue(value, out existingId))
+            {
+                Append("{\"$ref\":");
+                Append(existingId.ToString(CultureInfo.InvariantCulture));
+                Append("}");
+                return;
+            }
+
+            int id = _nextId++;
+            _seen[value] = id;
+
+            IDictionary dictionary = value as IDictionary;
+            if (dictionary != null)
+            {
+                WriteDictionary(dictionary, id, depth);
+                return;
+            }
+
+            IEnumerable enumerable = value as IEnumerable;
+            if (enumerable != null && !(value is string))
+            {
+                WriteEnumerable(enumerable, id, depth);
+                return;
+            }
+
+            WriteObject(value, type, id, depth);
+        }
+
+        private void WriteDictionary(IDictionary dictionary, int id, int depth)
+        {
+            Append("{\"$id\":");
+            Append(id.ToString(CultureInfo.InvariantCulture));
+            Append(",\"type\":\"");
+            Append(JsonTools.Escape(dictionary.GetType().FullName));
+            Append("\",\"entries\":[");
+
+            bool first = true;
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                if (!first)
+                {
+                    Append(",");
+                }
+
+                first = false;
+                Append("{\"key\":");
+                WriteValue(entry.Key, depth + 1);
+                Append(",\"value\":");
+                WriteValue(entry.Value, depth + 1);
+                Append("}");
+            }
+
+            Append("]}");
+        }
+
+        private void WriteEnumerable(IEnumerable enumerable, int id, int depth)
+        {
+            Append("{\"$id\":");
+            Append(id.ToString(CultureInfo.InvariantCulture));
+            Append(",\"type\":\"");
+            Append(JsonTools.Escape(enumerable.GetType().FullName));
+            Append("\",\"items\":[");
+
+            bool first = true;
+            foreach (object item in enumerable)
+            {
+                if (!first)
+                {
+                    Append(",");
+                }
+
+                first = false;
+                WriteValue(item, depth + 1);
+            }
+
+            Append("]}");
+        }
+
+        private void WriteObject(object value, Type type, int id, int depth)
+        {
+            Append("{\"$id\":");
+            Append(id.ToString(CultureInfo.InvariantCulture));
+            Append(",\"type\":\"");
+            Append(JsonTools.Escape(type.FullName));
+            Append("\",\"properties\":{");
+
+            bool first = true;
+            PropertyInfo[] properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            for (int i = 0; i < properties.Length; i++)
+            {
+                PropertyInfo property = properties[i];
+                if (!property.CanRead || property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                object propertyValue;
+                try
+                {
+                    propertyValue = property.GetValue(value, null);
+                }
+                catch (Exception ex)
+                {
+                    propertyValue = "property read failed: " + ex.GetType().Name;
+                }
+
+                if (!first)
+                {
+                    Append(",");
+                }
+
+                first = false;
+                Append("\"");
+                Append(JsonTools.Escape(property.Name));
+                Append("\":");
+                WriteValue(propertyValue, depth + 1);
+            }
+
+            FieldInfo[] fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
+            for (int i = 0; i < fields.Length; i++)
+            {
+                FieldInfo field = fields[i];
+                object fieldValue = field.GetValue(value);
+                if (!first)
+                {
+                    Append(",");
+                }
+
+                first = false;
+                Append("\"");
+                Append(JsonTools.Escape(field.Name));
+                Append("\":");
+                WriteValue(fieldValue, depth + 1);
+            }
+
+            Append("}}");
+        }
+
+        private void WritePrimitive(object value)
+        {
+            if (value is string || value is char)
+            {
+                Append("\"");
+                Append(JsonTools.Escape(Convert.ToString(value, CultureInfo.InvariantCulture)));
+                Append("\"");
+                return;
+            }
+
+            if (value is bool)
+            {
+                Append((bool)value ? "true" : "false");
+                return;
+            }
+
+            if (value is DateTime)
+            {
+                Append("\"");
+                Append(((DateTime)value).ToString("o", CultureInfo.InvariantCulture));
+                Append("\"");
+                return;
+            }
+
+            if (value is Enum)
+            {
+                Append("\"");
+                Append(JsonTools.Escape(value.ToString()));
+                Append("\"");
+                return;
+            }
+
+            Append(Convert.ToString(value, CultureInfo.InvariantCulture));
+        }
+
+        private void WriteUnsupported(object value, Type type)
+        {
+            Append("{\"unsupported\":true,\"type\":\"");
+            Append(JsonTools.Escape(type.FullName));
+            Append("\",\"id\":\"");
+            Append(JsonTools.Escape(type.FullName + "@" + RuntimeHelpers.GetHashCode(value).ToString("x", CultureInfo.InvariantCulture)));
+            Append("\",\"string\":\"");
+            Append(JsonTools.Escape(SafeToString(value)));
+            Append("\"}");
+        }
+
+        private static bool IsPrimitiveLike(Type type)
+        {
+            return type.IsPrimitive
+                || type.IsEnum
+                || type == typeof(string)
+                || type == typeof(char)
+                || type == typeof(decimal)
+                || type == typeof(DateTime);
+        }
+
+        private static bool IsUnsupported(Type type, object value)
+        {
+            return typeof(Delegate).IsAssignableFrom(type)
+                || typeof(IntPtr) == type
+                || typeof(UIntPtr) == type
+                || typeof(Stream).IsAssignableFrom(type)
+                || typeof(Task).IsAssignableFrom(type)
+                || typeof(MemberInfo).IsAssignableFrom(type)
+                || typeof(Type).IsAssignableFrom(type)
+                || type.IsPointer
+                || type.FullName != null && type.FullName.IndexOf("UnityEngine.Object") >= 0;
+        }
+
+        private static string SafeToString(object value)
+        {
+            try
+            {
+                return value == null ? string.Empty : value.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "ToString failed: " + ex.GetType().Name;
+            }
+        }
+
+        private void Append(string value)
+        {
+            _builder.Append(value);
+            CheckSize();
+        }
+
+        private void CheckSize()
+        {
+            if (Encoding.UTF8.GetByteCount(_builder.ToString()) > _maxResponseBytes)
+            {
+                throw new SerializationLimitException("Maximum response size exceeded.");
+            }
         }
     }
 
@@ -1073,31 +1399,6 @@ namespace ModTestBridge
             return int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out value) ? value : defaultValue;
         }
 
-        public static string SerializeSimpleValue(object value)
-        {
-            if (value == null)
-            {
-                return "null";
-            }
-
-            if (value is string)
-            {
-                return "\"" + Escape((string)value) + "\"";
-            }
-
-            if (value is bool)
-            {
-                return (bool)value ? "true" : "false";
-            }
-
-            if (value is byte || value is sbyte || value is short || value is ushort || value is int || value is uint || value is long || value is ulong || value is float || value is double || value is decimal)
-            {
-                return Convert.ToString(value, CultureInfo.InvariantCulture);
-            }
-
-            return "{\"type\":\"" + Escape(value.GetType().FullName) + "\",\"string\":\"" + Escape(value.ToString()) + "\"}";
-        }
-
         public static string Escape(string value)
         {
             if (value == null)
@@ -1145,6 +1446,20 @@ namespace ModTestBridge
                 else if (c == 't')
                 {
                     builder.Append('\t');
+                }
+                else if (c == 'u' && i + 4 < value.Length)
+                {
+                    string hex = value.Substring(i + 1, 4);
+                    int codePoint;
+                    if (int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out codePoint))
+                    {
+                        builder.Append((char)codePoint);
+                        i += 4;
+                    }
+                    else
+                    {
+                        builder.Append(c);
+                    }
                 }
                 else
                 {
