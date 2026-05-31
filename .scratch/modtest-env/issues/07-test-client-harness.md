@@ -1,6 +1,6 @@
 # Create reusable bridge TestClient and TestHarness
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,11 +8,11 @@ Create reusable host-side libraries for integration tests that launch MajdataPla
 
 ## Acceptance criteria
 
-- [ ] TestClient wraps `/health`, `/eval`, `/eval-isolated`, `/reset-session`, and `/shutdown`.
-- [ ] TestHarness launches `start-controller.bat` from the game directory so game-relative paths work.
-- [ ] The harness deletes stale readiness/log artifacts before launch, waits for a fresh readiness file, then polls `/health`.
-- [ ] The harness can collect MelonLoader/game logs into test artifacts.
-- [ ] If graceful shutdown fails, the harness kills only the process recorded in the readiness file.
+- [x] TestClient wraps `/health`, `/eval`, `/eval-isolated`, `/reset-session`, and `/shutdown`.
+- [x] TestHarness launches `start-controller.bat` from the game directory so game-relative paths work.
+- [x] The harness deletes stale readiness/log artifacts before launch, waits for a fresh readiness file, then polls `/health`.
+- [x] The harness can collect MelonLoader/game logs into test artifacts.
+- [x] If graceful shutdown fails, the harness kills only the process recorded in the readiness file.
 
 ## Blocked by
 

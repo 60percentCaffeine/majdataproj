@@ -17,6 +17,8 @@
 /modtest/bridge/packages/
 /modtest/repl/bin/
 /modtest/repl/obj/
+/modtest/harness/bin/
+/modtest/harness/obj/
 /testmod/native/*.dll
 /testmod/native/*.pdb
 /testmod/native/*.lib
