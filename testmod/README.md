@@ -21,6 +21,7 @@ The installed log line appears as:
 - `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it plus `TestMod.Core.dll` to `Majdata Hub/game/Mods`.
 - `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `testmod/artifacts/unit`.
 - `test-integration.ps1`: builds and installs the bridge, REPL client, harness, and sample mod, then runs real-game xUnit integration tests.
+- `test-all.ps1`: runs unit coverage and real-game integration tests in sequence.
 - `native/mlhook1.c`: small `VERSION.dll` import proxy used because this game did not load MelonLoader's original local `version.dll` proxy.
 - `build-native.sh`: rebuilds `native/mlhook1.dll` and installs it to `Majdata Hub/game/mlhook1.dll`.
 - `tools/Mono.Cecil.dll`: local helper used by `patch-melonloader-043.ps1`.
@@ -86,6 +87,12 @@ Run real-game integration tests:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-integration.ps1"
+```
+
+Run the full per-mod suite:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-all.ps1"
 ```
 
 To rebuild the native proxy from WSL:
