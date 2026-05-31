@@ -12,6 +12,7 @@
 
 # Built mod/native binaries
 /testmod/bin/
+/modtest/bridge/bin/
 /testmod/native/*.dll
 /testmod/native/*.pdb
 /testmod/native/*.lib
@@ -29,4 +30,3 @@ Thumbs.db
 .idea/
 .vscode/
 .serena/
-
