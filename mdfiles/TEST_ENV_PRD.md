@@ -35,11 +35,11 @@ CI integration is not part of the MVP. The target workflow is deterministic loca
 
 ### Bridge Components
 
-- `bridge/BridgeMod`: MelonLoader mod loaded by MajdataPlay.
-- `bridge/ReplClient`: separate Windows console REPL client launched on game startup.
-- `bridge/TestClient`: .NET client library for bridge HTTP endpoints.
-- `bridge/TestHarness`: reusable utilities for launching MajdataPlay, waiting for readiness, collecting logs, and shutting down the game.
-- `bridge/build.ps1` and `bridge/install.ps1`: bridge development scripts.
+- `mod-test-tools/test-hook-mod`: MelonLoader test hook mod loaded by MajdataPlay.
+- `mod-test-tools/repl`: separate Windows console REPL client launched on game startup.
+- `mod-test-tools/harness/TestClient`: .NET client library for test hook HTTP endpoints.
+- `mod-test-tools/harness/TestHarness`: reusable utilities for launching MajdataPlay, waiting for readiness, collecting logs, and shutting down the game.
+- `mod-test-tools/test-hook-mod/build.ps1` and `mod-test-tools/test-hook-mod/install.ps1`: test hook mod development scripts.
 
 ### Per-Mod Components
 
@@ -74,7 +74,7 @@ Configuration precedence:
 
 1. Game process CLI args, for example `--modtest-port 17444` or `--modtest-no-repl`.
 2. Environment variables, for example `MODTEST_BRIDGE_PORT=17444`.
-3. Config file under `UserData/ModTestBridge/config.json`.
+3. Config file under `UserData/TestHookMod/config.json`.
 4. Built-in defaults.
 
 The integration harness may generate a temporary config file before launch when passing CLI args or environment variables through Windows process startup is awkward.
@@ -83,7 +83,7 @@ The integration harness may generate a temporary config file before launch when 
 
 The bridge writes a readiness file after the HTTP server has started:
 
-`Majdata Hub/game/UserData/ModTestBridge/ready.json`
+`Majdata Hub/game/UserData/TestHookMod/ready.json`
 
 Example:
 
@@ -251,7 +251,7 @@ Runner lifecycle:
 2. Install required DLLs into the game directory.
 3. Remove stale readiness and log artifacts.
 4. Launch `start-controller.bat` from `Majdata Hub/game`.
-5. Wait for `UserData/ModTestBridge/ready.json`.
+5. Wait for `UserData/TestHookMod/ready.json`.
 6. Poll `/health` until ready.
 7. Run integration tests through `/eval` and `/eval-isolated`.
 8. Call `/shutdown`.

@@ -4,7 +4,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $MelonLoaderDir = Join-Path $ProjectRoot "Majdata Hub\game\MelonLoader"
 $MelonLoaderDll = Join-Path $MelonLoaderDir "MelonLoader.dll"
 $CecilDll = Join-Path $PSScriptRoot "tools\Mono.Cecil.dll"
-$BackupDll = Join-Path $MelonLoaderDir "MelonLoader.dll.before-testmod-patch"
+$BackupDll = Join-Path $MelonLoaderDir "MelonLoader.dll.before-sample-mod-patch"
 
 if (-not (Test-Path $BackupDll)) {
     Copy-Item $MelonLoaderDll $BackupDll

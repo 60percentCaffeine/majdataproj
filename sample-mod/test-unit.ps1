@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
     -c Release `
     --nologo `
     --results-directory $ResultsDir `
-    --logger "trx;LogFileName=testmod-core.trx" `
+    --logger "trx;LogFileName=sample-mod-core.trx" `
     --collect "XPlat Code Coverage" `
     -- `
     DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[TestMod.Core]*" `

@@ -19,7 +19,7 @@ The installed log line appears as:
 - `tests/TestMod.Core.Tests`: xUnit tests for the pure core assembly.
 - `build.ps1`: builds `bin/TestMod.dll` with the Windows .NET SDK Roslyn compiler.
 - `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it plus `TestMod.Core.dll` to `Majdata Hub/game/Mods`.
-- `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `testmod/artifacts/unit`.
+- `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `sample-mod/artifacts/unit`.
 - `test-integration.ps1`: builds and installs the test hook, REPL client, harness, and sample mod, then runs real-game xUnit integration tests.
 - `test-all.ps1`: runs unit coverage and real-game integration tests in sequence.
 - `native/mlhook1.c`: small `VERSION.dll` import proxy used because this game did not load MelonLoader's original local `version.dll` proxy.
@@ -43,7 +43,7 @@ There was no original `Majdata Hub/game/version.dll`; any local `version.dll` se
 `patch-melonloader-043.ps1` edits the installed `Majdata Hub/game/MelonLoader/MelonLoader.dll` with Mono.Cecil. The script keeps a first-run backup at:
 
 ```text
-Majdata Hub/game/MelonLoader/MelonLoader.dll.before-testmod-patch
+Majdata Hub/game/MelonLoader/MelonLoader.dll.before-sample-mod-patch
 ```
 
 The patches are compatibility shims for MajdataPlay's Unity/Mono profile. They are intentionally scoped to loading a simple non-Harmony test mod.
@@ -74,31 +74,31 @@ That prevents MelonLoader v0.4.3 from automatically calling `Harmony.PatchAll()`
 From the project root:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\install.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\sample-mod\install.ps1"
 ```
 
 Run pure core unit tests with coverage:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-unit.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\sample-mod\test-unit.ps1"
 ```
 
 Run real-game integration tests:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-integration.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\sample-mod\test-integration.ps1"
 ```
 
 Run the full per-mod suite:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-all.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\sample-mod\test-all.ps1"
 ```
 
 To rebuild the native proxy from WSL:
 
 ```bash
-./testmod/build-native.sh
+./sample-mod/build-native.sh
 ```
 
 Then start Majdata with:
@@ -171,7 +171,7 @@ Do not install or keep MelonLoader's `version.dll` in the game root for this set
 `patch-melonloader-043.ps1` needs `Mono.Cecil.dll` locally at:
 
 ```text
-testmod/tools/Mono.Cecil.dll
+sample-mod/tools/Mono.Cecil.dll
 ```
 
 The tested setup used `Mono.Cecil.dll` from MelonLoader v0.5.7:
@@ -189,7 +189,7 @@ MelonLoader/Mono.Cecil.dll
 to:
 
 ```text
-testmod/tools/Mono.Cecil.dll
+sample-mod/tools/Mono.Cecil.dll
 ```
 
 The DLL is intentionally gitignored because it is an external binary.
@@ -199,13 +199,13 @@ The DLL is intentionally gitignored because it is an external binary.
 From WSL at the project root:
 
 ```bash
-./testmod/build-native.sh
+./sample-mod/build-native.sh
 ```
 
 This builds:
 
 ```text
-testmod/native/mlhook1.dll
+sample-mod/native/mlhook1.dll
 ```
 
 and copies it to:
@@ -250,13 +250,13 @@ DLL Name: mlhook1.dll
 From the project root:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\install.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\sample-mod\install.ps1"
 ```
 
 This:
 
 - patches `Majdata Hub/game/MelonLoader/MelonLoader.dll` for MajdataPlay's Mono profile;
-- builds `testmod/bin/TestMod.dll`;
+- builds `sample-mod/bin/TestMod.dll`;
 - copies it to `Majdata Hub/game/Mods/TestMod.dll`.
 
 ### 7. Start And Verify

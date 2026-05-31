@@ -7,5 +7,5 @@ The working copy used `Mono.Cecil.dll` from the MelonLoader v0.5.7 release packa
 Expected local path:
 
 ```text
-testmod/tools/Mono.Cecil.dll
+sample-mod/tools/Mono.Cecil.dll
 ```

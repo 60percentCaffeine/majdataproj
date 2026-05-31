@@ -15,11 +15,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(ModTestBridge.TestHookMod), "Test Hook Mod", ModTestBridge.TestHookMod.BridgeVersion, "user0")]
+[assembly: MelonInfo(typeof(TestHookMod.TestHookMod), "Test Hook Mod", TestHookMod.TestHookMod.BridgeVersion, "user0")]
 [assembly: MelonGame]
 [assembly: HarmonyDontPatchAll]
 
-namespace ModTestBridge
+namespace TestHookMod
 {
     public sealed class TestHookMod : MelonMod
     {
@@ -416,7 +416,11 @@ namespace ModTestBridge
         {
             try
             {
-                string exePath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestReplClient", "ModTestReplClient.exe");
+                string exePath = Path.Combine(Environment.CurrentDirectory, "Mods", "TestHookModReplClient", "ModTestReplClient.exe");
+                if (!File.Exists(exePath))
+                {
+                    exePath = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestReplClient", "ModTestReplClient.exe");
+                }
                 if (!File.Exists(exePath))
                 {
                     MelonLogger.Warning("Test Hook Mod REPL client is enabled but not installed at " + exePath);
@@ -1133,7 +1137,7 @@ namespace ModTestBridge
 
         private Task<object> StartCompiled(Assembly assembly)
         {
-            Type type = assembly.GetType("__ModTestBridgeEval.Snippet");
+            Type type = assembly.GetType("__TestHookModEval.Snippet");
             MethodInfo method = type.GetMethod("Run", BindingFlags.Public | BindingFlags.Static);
             object result = method.Invoke(null, new object[] { new EvalGlobals() });
 
@@ -1234,7 +1238,7 @@ namespace ModTestBridge
                 }
             }
 
-            sourceBuilder.Append("namespace __ModTestBridgeEval {\r\n");
+            sourceBuilder.Append("namespace __TestHookModEval {\r\n");
             sourceBuilder.Append("  public static class Snippet {\r\n");
             sourceBuilder.Append("    public static Task<object> Run(EvalGlobals globals) {\r\n");
             if (sessionStatements != null)
@@ -1276,7 +1280,7 @@ namespace ModTestBridge
             sourceBuilder.Append("using System.Threading.Tasks;\r\n");
             sourceBuilder.Append("using MelonLoader;\r\n");
             sourceBuilder.Append("using UnityEngine;\r\n");
-            sourceBuilder.Append("using ModTestBridge;\r\n");
+            sourceBuilder.Append("using TestHookMod;\r\n");
         }
 
         private static bool IsUsingDirective(string code)
@@ -1492,7 +1496,11 @@ namespace ModTestBridge
         private static Assembly Resolve(object sender, ResolveEventArgs args)
         {
             AssemblyName name = new AssemblyName(args.Name);
-            string path = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestBridgeLib", name.Name + ".dll");
+            string path = Path.Combine(Environment.CurrentDirectory, "Mods", "TestHookModLib", name.Name + ".dll");
+            if (!File.Exists(path))
+            {
+                path = Path.Combine(Environment.CurrentDirectory, "Mods", "ModTestBridgeLib", name.Name + ".dll");
+            }
             if (File.Exists(path))
             {
                 return Assembly.LoadFrom(path);
@@ -1616,7 +1624,7 @@ namespace ModTestBridge
 
         public static string ConfigDirectory
         {
-            get { return Path.Combine(Environment.CurrentDirectory, "UserData", "ModTestBridge"); }
+            get { return Path.Combine(Environment.CurrentDirectory, "UserData", "TestHookMod"); }
         }
 
         public static BridgeConfig Load()
@@ -1668,12 +1676,12 @@ namespace ModTestBridge
 
             if (port != null)
             {
-                Port = ParsePort(port, "UserData/ModTestBridge/config.json port");
+                Port = ParsePort(port, "UserData/TestHookMod/config.json port");
             }
 
             if (repl != null)
             {
-                ReplEnabled = ParseBool(repl, "UserData/ModTestBridge/config.json REPL setting");
+                ReplEnabled = ParseBool(repl, "UserData/TestHookMod/config.json REPL setting");
             }
         }
 

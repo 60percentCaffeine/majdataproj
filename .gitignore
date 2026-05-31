@@ -11,28 +11,28 @@
 /downloads/
 
 # Built mod/native binaries
-/testmod/bin/
-/testmod/src/**/bin/
-/testmod/src/**/obj/
-/testmod/tests/**/bin/
-/testmod/tests/**/obj/
-/testmod/artifacts/
-/modtest/bridge/bin/
-/modtest/bridge/obj/
-/modtest/bridge/packages/
-/modtest/repl/bin/
-/modtest/repl/obj/
-/modtest/harness/bin/
-/modtest/harness/obj/
-/modtest/integration/bin/
-/modtest/integration/obj/
-/modtest-artifacts/
-/.scratch/modtest-artifacts/
-/testmod/native/*.dll
-/testmod/native/*.pdb
-/testmod/native/*.lib
-/testmod/native/*.exp
-/testmod/tools/*.dll
+/sample-mod/bin/
+/sample-mod/src/**/bin/
+/sample-mod/src/**/obj/
+/sample-mod/tests/**/bin/
+/sample-mod/tests/**/obj/
+/sample-mod/artifacts/
+/mod-test-tools/test-hook-mod/bin/
+/mod-test-tools/test-hook-mod/obj/
+/mod-test-tools/test-hook-mod/packages/
+/mod-test-tools/repl/bin/
+/mod-test-tools/repl/obj/
+/mod-test-tools/harness/bin/
+/mod-test-tools/harness/obj/
+/mod-test-tools/integration/bin/
+/mod-test-tools/integration/obj/
+/mod-test-tools-artifacts/
+/.scratch/mod-test-tools-artifacts/
+/sample-mod/native/*.dll
+/sample-mod/native/*.pdb
+/sample-mod/native/*.lib
+/sample-mod/native/*.exp
+/sample-mod/tools/*.dll
 
 # Logs and crash dumps
 *.log

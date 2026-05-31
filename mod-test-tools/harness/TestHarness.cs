@@ -13,8 +13,8 @@ namespace ModTestHarness
         {
             ProjectRoot = Path.GetFullPath(projectRoot);
             GameRoot = Path.Combine(ProjectRoot, "Majdata Hub", "game");
-            ReadyPath = Path.Combine(GameRoot, "UserData", "ModTestBridge", "ready.json");
-            ArtifactsRoot = Path.Combine(ProjectRoot, ".scratch", "modtest-artifacts");
+            ReadyPath = Path.Combine(GameRoot, "UserData", "TestHookMod", "ready.json");
+            ArtifactsRoot = Path.Combine(ProjectRoot, ".scratch", "mod-test-tools-artifacts");
         }
 
         public string ProjectRoot { get; }

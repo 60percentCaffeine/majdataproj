@@ -33,7 +33,7 @@ $ReferenceArgs = $References | ForEach-Object { "/reference:$_" }
     /nostdlib+ `
     /out:$OutputDll `
     $ReferenceArgs `
-    (Join-Path $PSScriptRoot "ModTestBridge.cs")
+    (Join-Path $PSScriptRoot "TestHookMod.cs")
 
 if ($LASTEXITCODE -ne 0) {
     throw "csc failed with exit code $LASTEXITCODE"

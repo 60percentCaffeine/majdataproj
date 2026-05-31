@@ -3,7 +3,7 @@
 `Test Hook Mod` writes its readiness file after the loopback HTTP listener has successfully bound:
 
 ```text
-Majdata Hub/game/UserData/ModTestBridge/ready.json
+Majdata Hub/game/UserData/TestHookMod/ready.json
 ```
 
 The file contains `pid`, `host`, `port`, `startedAt`, and `bridgeVersion`. Integration runners must delete any existing readiness file before launching MajdataPlay, then wait for a newly-created file whose `pid` still exists and whose `startedAt` is after the launch attempt began. A readiness file left behind by a crashed or force-killed game process is stale and must not be trusted.
@@ -11,7 +11,7 @@ The file contains `pid`, `host`, `port`, `startedAt`, and `bridgeVersion`. Integ
 The default listener is `127.0.0.1:17443` with REPL launch enabled. Test hook configuration is applied in this order, from lowest to highest precedence:
 
 1. Built-in defaults.
-2. `Majdata Hub/game/UserData/ModTestBridge/config.json`.
+2. `Majdata Hub/game/UserData/TestHookMod/config.json`.
 3. Environment variables: `MODTEST_BRIDGE_HOST`, `MODTEST_BRIDGE_PORT`, `MODTEST_BRIDGE_REPL`.
 4. Game process command-line arguments: `--modtest-host`, `--modtest-port`, `--modtest-repl`, `--modtest-no-repl`.
 
@@ -27,7 +27,7 @@ Example `config.json`:
 
 Invalid configuration fails test hook startup visibly in the MelonLoader log and does not write a fresh readiness file. Supported boolean values include `true`, `false`, `1`, `0`, `yes`, `no`, `on`, and `off`.
 
-When REPL launch is enabled and `Majdata Hub/game/Mods/ModTestReplClient/ModTestReplClient.exe` is installed, test hook startup launches a separate Windows console client connected to the effective host and port. The client sends normal input to `/eval`, so it shares persistent session state. Client commands are `:reset`, `:clear`, `:exit`, and `:help`.
+When REPL launch is enabled and `Majdata Hub/game/Mods/TestHookModReplClient/ModTestReplClient.exe` is installed, test hook startup launches a separate Windows console client connected to the effective host and port. The client sends normal input to `/eval`, so it shares persistent session state. Client commands are `:reset`, `:clear`, `:exit`, and `:help`.
 
 After reading a fresh readiness file, runners should poll:
 
@@ -43,6 +43,6 @@ GET http://127.0.0.1:17443/health
 
 Eval result serialization is bounded by the request's `maxDepth` and `maxResponseBytes` fields. Primitive values, arrays, dictionaries, and DTO-shaped objects serialize as JSON. Cycles are represented with `$id`/`$ref` markers. Runtime-only values such as delegates, pointers, streams, tasks, reflection objects, and Unity native objects are represented as unsupported pointer-like records with type, id, and string fields. Serialization limit failures return `phase: "serialization"`.
 
-`modtest/harness` contains host-side `TestClient` and `TestHarness` helpers for integration tests. `TestClient` wraps `/health`, `/eval`, `/eval-isolated`, `/reset-session`, and `/shutdown`. `TestHarness` launches `start-controller.bat` from the game directory, deletes stale readiness files before launch, waits for a fresh readiness file and healthy bridge, collects MelonLoader/game logs into `.scratch/modtest-artifacts`, and falls back to killing only the PID recorded in `ready.json` if graceful shutdown fails.
+`mod-test-tools/harness` contains host-side `TestClient` and `TestHarness` helpers for integration tests. `TestClient` wraps `/health`, `/eval`, `/eval-isolated`, `/reset-session`, and `/shutdown`. `TestHarness` launches `start-controller.bat` from the game directory, deletes stale readiness files before launch, waits for a fresh readiness file and healthy bridge, collects MelonLoader/game logs into `.scratch/mod-test-tools-artifacts`, and falls back to killing only the PID recorded in `ready.json` if graceful shutdown fails.
 
 `POST /shutdown` returns structured JSON with `ok`, `phase`, `accepted`, and `fallbackPid`. The bridge first requests Unity application quit on the main thread, then uses an in-process delayed termination fallback because this MajdataPlay/MelonLoader profile can ignore `Application.Quit`. Harnesses should still retain the readiness-file PID fallback for cases where the HTTP request fails or the process does not exit.

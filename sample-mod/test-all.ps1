@@ -17,4 +17,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "All TestMod tests passed."
 Write-Host "Unit artifacts: $PSScriptRoot\artifacts\unit"
-Write-Host "Integration artifacts: $(Resolve-Path (Join-Path $PSScriptRoot '..\.scratch\modtest-artifacts'))"
+Write-Host "Integration artifacts: $(Resolve-Path (Join-Path $PSScriptRoot '..\.scratch\mod-test-tools-artifacts'))"
