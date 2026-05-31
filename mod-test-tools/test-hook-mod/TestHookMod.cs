@@ -596,7 +596,8 @@ namespace TestHookMod
 
             if (quit == null)
             {
-                throw new MissingMethodException("UnityEngine.Application.Quit");
+                MelonLogger.Warning("UnityEngine.Application.Quit is unavailable; waiting for forced process exit fallback.");
+                return;
             }
 
             if (quit.GetParameters().Length == 0)

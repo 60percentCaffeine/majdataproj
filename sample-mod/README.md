@@ -18,7 +18,7 @@ The installed log line appears as:
 - `src/TestMod.Core`: pure mod logic that builds without Unity, MajdataPlay, or MelonLoader runtime initialization.
 - `tests/TestMod.Core.Tests`: xUnit tests for the pure core assembly.
 - `build.ps1`: builds `bin/TestMod.dll` with the Windows .NET SDK Roslyn compiler.
-- `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it plus `TestMod.Core.dll` to `Majdata Hub/game/Mods`.
+- `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, copies `TestMod.dll` to `Majdata Hub/game/Mods`, and copies `TestMod.Core.dll` to `Majdata Hub/game/Mods/TestModLib`.
 - `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `sample-mod/artifacts/unit`.
 - `test-integration.ps1`: builds and installs the test hook, REPL client, harness, and sample mod, then runs real-game xUnit integration tests.
 - `test-all.ps1`: runs unit coverage and real-game integration tests in sequence.

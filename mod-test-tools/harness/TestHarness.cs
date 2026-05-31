@@ -9,6 +9,8 @@ namespace ModTestHarness
 {
     public sealed class TestHarness
     {
+        private static readonly string[] RuntimeProcessNames = { "MajdataPlay", "ModTestReplClient" };
+
         public TestHarness(string projectRoot)
         {
             ProjectRoot = Path.GetFullPath(projectRoot);
@@ -25,6 +27,7 @@ namespace ModTestHarness
         public async Task<HarnessRun> LaunchAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
         {
             DateTimeOffset launchedAt = DateTimeOffset.UtcNow;
+            await StopProcessesByNameAsync(RuntimeProcessNames, TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
             DeleteStaleArtifacts();
 
             ProcessStartInfo start = new ProcessStartInfo();
@@ -75,20 +78,82 @@ namespace ModTestHarness
             }
         }
 
+        public async Task WaitForReadinessPidExitAsync(BridgeReadyFile ready, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            if (ready == null || ready.Pid <= 0)
+            {
+                return;
+            }
+
+            Process process;
+            try
+            {
+                process = Process.GetProcessById(ready.Pid);
+            }
+            catch
+            {
+                return;
+            }
+
+            using (process)
+            {
+                DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (process.HasExited)
+                    {
+                        return;
+                    }
+
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            KillReadinessPid(ready);
+        }
+
+        public Task StopRuntimeProcessesAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            return StopProcessesByNameAsync(RuntimeProcessNames, timeout, cancellationToken);
+        }
+
         private void DeleteStaleArtifacts()
         {
-            if (File.Exists(ReadyPath))
-            {
-                File.Delete(ReadyPath);
-            }
-
-            string tempReady = ReadyPath + ".tmp";
-            if (File.Exists(tempReady))
-            {
-                File.Delete(tempReady);
-            }
-
+            DeleteFileWithRetry(ReadyPath, TimeSpan.FromSeconds(10));
+            DeleteFileWithRetry(ReadyPath + ".tmp", TimeSpan.FromSeconds(10));
             Directory.CreateDirectory(ArtifactsRoot);
+        }
+
+        private static void DeleteFileWithRetry(string path, TimeSpan timeout)
+        {
+            DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
+            while (true)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+
+                    return;
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+
+                if (DateTimeOffset.UtcNow >= deadline)
+                {
+                    File.Delete(path);
+                    return;
+                }
+
+                Thread.Sleep(250);
+            }
         }
 
         private async Task<BridgeReadyFile> WaitForReadyFileAsync(DateTimeOffset launchedAt, TimeSpan timeout, CancellationToken cancellationToken)
@@ -155,6 +220,59 @@ namespace ModTestHarness
                 File.Copy(source, destination, true);
             }
         }
+
+        private static async Task StopProcessesByNameAsync(string[] processNames, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            KillProcessesByName(processNames);
+
+            DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!AnyProcessesByName(processNames))
+                {
+                    return;
+                }
+
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+            }
+
+            KillProcessesByName(processNames);
+        }
+
+        private static bool AnyProcessesByName(string[] processNames)
+        {
+            for (int i = 0; i < processNames.Length; i++)
+            {
+                if (Process.GetProcessesByName(processNames[i]).Length > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void KillProcessesByName(string[] processNames)
+        {
+            for (int i = 0; i < processNames.Length; i++)
+            {
+                Process[] processes = Process.GetProcessesByName(processNames[i]);
+                for (int j = 0; j < processes.Length; j++)
+                {
+                    using (Process process = processes[j])
+                    {
+                        try
+                        {
+                            process.Kill(true);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
+        }
     }
 
     public sealed class HarnessRun : IDisposable
@@ -178,6 +296,8 @@ namespace ModTestHarness
                 BridgeResponse response = await Client.ShutdownAsync(cancellationToken).ConfigureAwait(false);
                 if (response.StatusCode >= 200 && response.StatusCode < 300)
                 {
+                    await _harness.WaitForReadinessPidExitAsync(Ready, TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+                    await _harness.StopRuntimeProcessesAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
                     return;
                 }
             }
@@ -186,6 +306,7 @@ namespace ModTestHarness
             }
 
             _harness.KillReadinessPid(Ready);
+            await _harness.StopRuntimeProcessesAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
         }
 
         public void Dispose()
