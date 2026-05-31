@@ -34,3 +34,5 @@ GET http://127.0.0.1:17443/health
 ```
 
 `/health` returns structured JSON with `ok`, `bridgeVersion`, `pid`, `host`, `port`, `replEnabled`, and `mainThreadDispatcherReady`.
+
+`POST /eval-isolated` accepts JSON with `code`, `timeoutMs`, `maxDepth`, and `maxResponseBytes`. It compiles each snippet through the Windows .NET SDK Roslyn compiler in a temporary isolated assembly, schedules execution through the Unity startup thread synchronization context, and returns structured success, compilation-error, execution-error, or timeout JSON.

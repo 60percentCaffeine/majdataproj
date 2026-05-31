@@ -19,6 +19,8 @@ $References = @(
     Join-Path $ManagedDir "mscorlib.dll"
     Join-Path $ManagedDir "System.dll"
     Join-Path $ManagedDir "System.Core.dll"
+    Join-Path $ManagedDir "netstandard.dll"
+    Join-Path $ManagedDir "UnityEngine.CoreModule.dll"
     Join-Path $MelonLoaderDir "MelonLoader.dll"
 )
 

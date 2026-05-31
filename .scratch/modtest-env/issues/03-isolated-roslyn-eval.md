@@ -1,6 +1,6 @@
 # Implement isolated Roslyn eval on Unity main thread
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,11 +8,11 @@ Add an isolated C# evaluation endpoint that accepts script-style Roslyn snippets
 
 ## Acceptance criteria
 
-- [ ] `POST /eval-isolated` accepts code, timeoutMs, maxDepth, and maxResponseBytes fields.
-- [ ] Snippets can access Unity, MelonLoader, loaded game assemblies, bridge utilities, and bridge-provided globals.
-- [ ] Evaluation runs on the Unity main thread by default.
-- [ ] Async snippets are supported without deadlocking the Unity update loop.
-- [ ] Compilation and execution failures return structured errors without crashing the game.
+- [x] `POST /eval-isolated` accepts code, timeoutMs, maxDepth, and maxResponseBytes fields.
+- [x] Snippets can access Unity, MelonLoader, loaded game assemblies, bridge utilities, and bridge-provided globals.
+- [x] Evaluation runs on the Unity main thread by default.
+- [x] Async snippets are supported without deadlocking the Unity update loop.
+- [x] Compilation and execution failures return structured errors without crashing the game.
 
 ## Blocked by
 

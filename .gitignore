@@ -13,6 +13,8 @@
 # Built mod/native binaries
 /testmod/bin/
 /modtest/bridge/bin/
+/modtest/bridge/obj/
+/modtest/bridge/packages/
 /testmod/native/*.dll
 /testmod/native/*.pdb
 /testmod/native/*.lib
