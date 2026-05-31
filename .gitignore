@@ -12,6 +12,11 @@
 
 # Built mod/native binaries
 /testmod/bin/
+/testmod/src/**/bin/
+/testmod/src/**/obj/
+/testmod/tests/**/bin/
+/testmod/tests/**/obj/
+/testmod/artifacts/
 /modtest/bridge/bin/
 /modtest/bridge/obj/
 /modtest/bridge/packages/

@@ -9,5 +9,6 @@ $ModsDir = Join-Path $GameRoot "Mods"
 
 New-Item -ItemType Directory -Force -Path $ModsDir | Out-Null
 Copy-Item -Force (Join-Path $PSScriptRoot "bin\TestMod.dll") (Join-Path $ModsDir "TestMod.dll")
+Copy-Item -Force (Join-Path $PSScriptRoot "bin\TestMod.Core.dll") (Join-Path $ModsDir "TestMod.Core.dll")
 
-Write-Host "Installed TestMod.dll to $ModsDir"
+Write-Host "Installed TestMod.dll and TestMod.Core.dll to $ModsDir"

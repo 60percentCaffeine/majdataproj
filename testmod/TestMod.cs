@@ -1,4 +1,5 @@
 using MelonLoader;
+using TestMod.Core;
 
 [assembly: MelonInfo(typeof(TestMod.TestMod), "TestMod", "1.0.0", "user0")]
 [assembly: MelonGame]
@@ -10,7 +11,8 @@ namespace TestMod
     {
         public override void OnApplicationStart()
         {
-            MelonLogger.Msg("Loaded");
+            TestModLogic logic = new TestModLogic();
+            MelonLogger.Msg(logic.StartupMessage());
         }
     }
 }

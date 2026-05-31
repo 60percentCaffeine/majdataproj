@@ -1,6 +1,6 @@
 # Split sample mod into core, Melon adapter, and unit tests with coverage
 
-Status: ready-for-agent
+Status: completed
 
 ## What to build
 
@@ -8,11 +8,11 @@ Create a sample mod structure that separates pure mod logic from MelonLoader and
 
 ## Acceptance criteria
 
-- [ ] The sample mod has a pure core assembly that can build without launching Unity, MajdataPlay, or MelonLoader runtime initialization.
-- [ ] The MelonLoader entrypoint delegates game-bound behavior through adapter code.
-- [ ] xUnit unit tests cover the pure core assembly.
-- [ ] `test-unit.ps1` builds the relevant projects, runs all unit tests, and produces human-readable results.
-- [ ] Coverage output targets mod core logic and excludes generated files and bridge infrastructure.
+- [x] The sample mod has a pure core assembly that can build without launching Unity, MajdataPlay, or MelonLoader runtime initialization.
+- [x] The MelonLoader entrypoint delegates game-bound behavior through adapter code.
+- [x] xUnit unit tests cover the pure core assembly.
+- [x] `test-unit.ps1` builds the relevant projects, runs all unit tests, and produces human-readable results.
+- [x] Coverage output targets mod core logic and excludes generated files and bridge infrastructure.
 
 ## Blocked by
 

@@ -1,6 +1,6 @@
 # TestMod
 
-Minimal MelonLoader mod for MajdataPlay. It logs:
+Minimal MelonLoader mod for MajdataPlay. The sample is split into a pure core assembly and a MelonLoader adapter. The adapter logs:
 
 ```text
 Loaded
@@ -15,8 +15,11 @@ The installed log line appears as:
 ## Files
 
 - `TestMod.cs`: the mod source.
+- `src/TestMod.Core`: pure mod logic that builds without Unity, MajdataPlay, or MelonLoader runtime initialization.
+- `tests/TestMod.Core.Tests`: xUnit tests for the pure core assembly.
 - `build.ps1`: builds `bin/TestMod.dll` with the Windows .NET SDK Roslyn compiler.
-- `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it to `Majdata Hub/game/Mods/TestMod.dll`.
+- `install.ps1`: patches the installed MelonLoader v0.4.3 compatibility shims, builds the mod, and copies it plus `TestMod.Core.dll` to `Majdata Hub/game/Mods`.
+- `test-unit.ps1`: builds the core/tests, runs xUnit, and writes coverage artifacts under `testmod/artifacts/unit`.
 - `native/mlhook1.c`: small `VERSION.dll` import proxy used because this game did not load MelonLoader's original local `version.dll` proxy.
 - `build-native.sh`: rebuilds `native/mlhook1.dll` and installs it to `Majdata Hub/game/mlhook1.dll`.
 - `tools/Mono.Cecil.dll`: local helper used by `patch-melonloader-043.ps1`.
@@ -70,6 +73,12 @@ From the project root:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\install.ps1"
+```
+
+Run pure core unit tests with coverage:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\testmod\test-unit.ps1"
 ```
 
 To rebuild the native proxy from WSL:
