@@ -131,11 +131,9 @@ namespace TestHookMod
             }
 
             Array.Sort(samples);
-            double sum = 0;
             int dropped = 0;
             for (int i = 0; i < samples.Length; i++)
             {
-                sum += samples[i];
                 if (samples[i] > (1.0 / 30.0))
                 {
                     dropped++;
@@ -144,13 +142,14 @@ namespace TestHookMod
 
             double p95 = samples.Length == 0 ? 0 : samples[Math.Min(samples.Length - 1, (int)Math.Ceiling(samples.Length * 0.95) - 1)];
             double max = samples.Length == 0 ? 0 : samples[samples.Length - 1];
+            double samplingWindowSeconds = Math.Max(0, lastSampleAt - startedAt);
             return new FrameTimingSnapshot
             {
                 SampleCount = samples.Length,
                 StartFrame = startFrame,
                 EndFrame = lastFrame,
-                SamplingWindowSeconds = Math.Max(0, lastSampleAt - startedAt),
-                AverageFps = sum <= 0 ? 0 : samples.Length / sum,
+                SamplingWindowSeconds = samplingWindowSeconds,
+                AverageFps = samplingWindowSeconds <= 0 ? 0 : samples.Length / samplingWindowSeconds,
                 P95FrameTimeMs = p95 * 1000.0,
                 MaxFrameTimeMs = max * 1000.0,
                 DroppedFrameRatio = samples.Length == 0 ? 0 : (double)dropped / samples.Length,

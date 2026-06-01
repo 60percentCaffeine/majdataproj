@@ -129,3 +129,35 @@
 - Notes:
   - `Application.targetFrameRate` and `QualitySettings.vSyncCount` are not readable through the Unity reference assemblies available to the hook compiler, so the canary relies on sampled `Time.unscaledDeltaTime` metrics instead.
   - Isolated max-frame spikes were observed during local launches while p95 and dropped-frame ratio stayed healthy; max frame time is still reported in failure details, but it is not used as a standalone failure gate.
+
+## 2026-06-01 - Issue 21: song FPS regression canary
+
+- Added `SongFpsRegressionCanaryTests.KnownLocalChartGameplayFrameTimingStaysWithinConservativeThresholds`.
+- The canary starts the same deterministic gameplay setup used by the dry-run canary:
+  - local `MAJTITLE`;
+  - `Easy` difficulty;
+  - `Normal` game mode;
+  - autoplay enabled;
+  - global and track volume muted in memory and restored during cleanup.
+- The test also asserts the current expected display/window settings before sampling:
+  - configured resolution is `1080x1920`;
+  - configured FPS limit is `120`;
+  - configured VSync is enabled;
+  - configured fullscreen mode is enabled;
+  - actual `Screen.width`, `Screen.height`, and fullscreen state are captured in the setup payload.
+- Sampling begins only after the `Game` scene is active, `GamePlayManager.State` is `Running`, the known game info is visible, gameplay audio has a positive length, and note/object counts are nonzero.
+- Gameplay regression gates use conservative local defaults:
+  - at least 120 samples over the five-second window;
+  - frame count advances and the observed sampling window is at least four seconds;
+  - average FPS is at least 30;
+  - p95 frame time is at most 75 ms;
+  - dropped-frame ratio is at most 20%.
+- Adjusted the shared `FrameTimingProbe` average FPS calculation to use `sampleCount / realtimeWindow` instead of summing raw `Time.unscaledDeltaTime` values. This keeps average FPS aligned with the fixed sampling window while still reporting p95, max frame time, and dropped-frame ratio from the raw Unity frame deltas.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for both FPS canaries: passed, 2/2, duration 2m 06s.
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`: passed, 13/13, duration 7m 04s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - `Screen.fullScreenMode` is not readable through the eval compiler's Unity reference assemblies, so the canary records actual fullscreen state plus configured display settings instead.
+  - The full 13-test suite passed after the shared sampler average-FPS correction; the song FPS canary itself also passed in the earlier full run before that correction.
