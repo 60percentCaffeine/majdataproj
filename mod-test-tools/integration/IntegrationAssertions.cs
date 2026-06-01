@@ -12,7 +12,7 @@ namespace ModTestIntegration
     {
         public static JsonElement EvalResultProperties(BridgeResponse response)
         {
-            Assert.Equal(200, response.StatusCode);
+            Assert.True(response.StatusCode == 200, "Eval response status " + response.StatusCode + ":\n" + response.Content);
             using JsonDocument document = JsonDocument.Parse(response.Content);
             Assert.True(document.RootElement.GetProperty("ok").GetBoolean(), response.Content);
             Assert.Equal("execution", document.RootElement.GetProperty("phase").GetString());
