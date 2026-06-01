@@ -1,6 +1,6 @@
 # Add Install Smoke Verification
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -14,13 +14,20 @@ This verification should stay focused on boot/install confidence. It should not 
 
 ## Acceptance criteria
 
-- [ ] There is a documented command or script for smoke-verifying the prototype mod.
-- [ ] The smoke path builds and installs the prototype mod before launch.
-- [ ] The smoke path launches MajdataPlay using the existing project conventions.
-- [ ] The smoke path verifies that the prototype activation log line appears.
-- [ ] The smoke path checks for fatal boot failures using existing log/assertion conventions where practical.
-- [ ] The smoke path does not require manual UI interaction to pass.
-- [ ] Documentation explains what the smoke verification does and does not prove.
+- [x] There is a documented command or script for smoke-verifying the prototype mod.
+- [x] The smoke path builds and installs the prototype mod before launch.
+- [x] The smoke path launches MajdataPlay using the existing project conventions.
+- [x] The smoke path verifies that the prototype activation log line appears.
+- [x] The smoke path checks for fatal boot failures using existing log/assertion conventions where practical.
+- [x] The smoke path does not require manual UI interaction to pass.
+- [x] Documentation explains what the smoke verification does and does not prove.
+
+## Completion notes
+
+- Added `ui-prototype-template-mod/test-smoke.ps1`.
+- The script stops stale game/REPL processes, runs `install.ps1`, launches `Majdata Hub\game\start-controller.bat`, waits for prototype mod load/activation/core/render/timer log lines, scans current MelonLoader and runtime logs for fatal boot patterns, copies artifacts, and stops the game process.
+- Documented the smoke command and its limits in `ui-prototype-template-mod/README.md`.
+- Verified `test-smoke.ps1` passes without manual UI interaction.
 
 ## Blocked by
 

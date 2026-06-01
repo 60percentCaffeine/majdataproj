@@ -29,6 +29,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majda
 
 The tests cover the Unity-free song-first prototype state machine and write results under `ui-prototype-template-mod\artifacts\unit`.
 
+## Smoke Verification
+
+From the project root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\ui-prototype-template-mod\test-smoke.ps1"
+```
+
+The smoke script builds and installs the prototype mod, launches MajdataPlay through `start-controller.bat`, waits for prototype activation/render/timer log lines, scans the current MelonLoader and Majdata runtime logs for fatal boot failures, writes artifacts under `ui-prototype-template-mod\artifacts\smoke`, and stops the game process. It does not prove layout pixel correctness or manual interaction feel.
+
 ## Input
 
 Prototype logic consumes semantic actions from `UiPrototypeTemplateMod.Core`, not direct Unity keys. The adapter prefers MajdataPlay input reflection for A3/A6/A4/A5 when that API is available, and otherwise uses the keyboard fallback:
