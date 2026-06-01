@@ -1,6 +1,6 @@
 # Wire Semantic Input Actions
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -14,12 +14,21 @@ The adapter should prefer MajdataPlay's centralized input layer through reflecti
 
 ## Acceptance criteria
 
-- [ ] Prototype screen logic receives semantic input actions rather than direct Unity key checks.
-- [ ] The input adapter can map Majdata-style A3/A6/A4/A5 controls to song and difficulty actions.
-- [ ] A keyboard fallback can drive the same actions when Majdata input reflection is unavailable.
-- [ ] The active input source is visible in prototype diagnostics.
-- [ ] Input mapping behavior is covered by unit tests where it can be tested outside Unity.
-- [ ] The runnable mod still launches and renders after the input adapter is connected.
+- [x] Prototype screen logic receives semantic input actions rather than direct Unity key checks.
+- [x] The input adapter can map Majdata-style A3/A6/A4/A5 controls to song and difficulty actions.
+- [x] A keyboard fallback can drive the same actions when Majdata input reflection is unavailable.
+- [x] The active input source is visible in prototype diagnostics.
+- [x] Input mapping behavior is covered by unit tests where it can be tested outside Unity.
+- [x] The runnable mod still launches and renders after the input adapter is connected.
+
+## Completion notes
+
+- Added `PrototypeInputSource`, `RawPrototypeInput`, `PrototypeInputFrame`, and `PrototypeInputMapper` to the Unity-free core.
+- Mapped A3/A6/A4/A5 to song next/previous, difficulty up/down, OK, and Back based on the active phase.
+- Added keyboard fallback mappings for Right/Down/D, Left/Up/A, Enter/Space, and Escape/Backspace.
+- Added a MelonLoader adapter input path that attempts MajdataPlay input reflection first, falls back to keyboard input, and exposes the active source in logs and overlay diagnostics.
+- Added 4 input mapper tests; the core test command now passes 11 tests total.
+- Verified the runnable mod still launches and installs the placeholder after the input adapter is connected.
 
 ## Blocked by
 

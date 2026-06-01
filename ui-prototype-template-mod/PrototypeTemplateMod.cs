@@ -23,6 +23,9 @@ namespace UiPrototypeTemplateMod
         private static Texture2D _overlayTexture;
         private static bool _loggedFirstGui;
         private static GameObject _runtimeOverlayObject;
+        private static string _diagnosticsLine = "Input: initializing";
+        private object _session;
+        private MajdataInputAdapter _majdataInput;
         private GameObject _overlayObject;
 
         static PrototypeTemplateMod()
@@ -34,13 +37,18 @@ namespace UiPrototypeTemplateMod
         {
             MelonLogger.Msg(ActivationMessage);
             PrototypeSession session = PrototypeSession.CreateDefault();
+            _session = session;
+            _majdataInput = MajdataInputAdapter.Create();
+            _diagnosticsLine = "Input: " + (_majdataInput.IsAvailable ? PrototypeInputSource.MajdataReflection.ToString() : PrototypeInputSource.KeyboardFallback.ToString());
             MelonLogger.Msg("Prototype core ready: phase=" + session.Phase + " song=" + session.SelectedSong.Title + " difficulty=" + session.SelectedDifficulty.Name);
+            MelonLogger.Msg("Prototype input source: " + _diagnosticsLine);
             EnsureOverlayObject();
         }
 
         public override void OnUpdate()
         {
             EnsureOverlayObject();
+            UpdatePrototypeStateFromInput();
             Time.timeScale = 0f;
         }
 
@@ -81,6 +89,70 @@ namespace UiPrototypeTemplateMod
 
             DrawVirtualCanvas();
             GUI.matrix = previousMatrix;
+        }
+
+        internal static string DiagnosticsLine
+        {
+            get { return _diagnosticsLine; }
+        }
+
+        private void UpdatePrototypeStateFromInput()
+        {
+            PrototypeSession session = _session as PrototypeSession;
+            if (session == null)
+            {
+                return;
+            }
+
+            RawPrototypeInput input;
+            if (_majdataInput != null && _majdataInput.TryRead(out input))
+            {
+                _diagnosticsLine = "Input: " + input.Source;
+            }
+            else
+            {
+                input = ReadKeyboardFallback();
+                _diagnosticsLine = "Input: " + input.Source;
+            }
+
+            PrototypeInputFrame frame = PrototypeInputMapper.Map(session.Phase, input);
+            if (!frame.HasActions)
+            {
+                return;
+            }
+
+            for (int i = 0; i < frame.Actions.Count; i++)
+            {
+                session.Apply(frame.Actions[i]);
+            }
+
+            _diagnosticsLine = "Input: " + frame.Source + " Actions: " + JoinActions(frame);
+        }
+
+        private static RawPrototypeInput ReadKeyboardFallback()
+        {
+            return new RawPrototypeInput(
+                PrototypeInputSource.KeyboardFallback,
+                KeyboardInput.GetKeyDown(KeyCode.RightArrow) || KeyboardInput.GetKeyDown(KeyCode.DownArrow) || KeyboardInput.GetKeyDown(KeyCode.D),
+                KeyboardInput.GetKeyDown(KeyCode.Return) || KeyboardInput.GetKeyDown(KeyCode.Space),
+                KeyboardInput.GetKeyDown(KeyCode.Escape) || KeyboardInput.GetKeyDown(KeyCode.Backspace),
+                KeyboardInput.GetKeyDown(KeyCode.LeftArrow) || KeyboardInput.GetKeyDown(KeyCode.UpArrow) || KeyboardInput.GetKeyDown(KeyCode.A));
+        }
+
+        private static string JoinActions(PrototypeInputFrame frame)
+        {
+            string result = string.Empty;
+            for (int i = 0; i < frame.Actions.Count; i++)
+            {
+                if (i > 0)
+                {
+                    result += ",";
+                }
+
+                result += frame.Actions[i].ToString();
+            }
+
+            return result;
         }
 
         private void EnsureOverlayObject()
@@ -127,6 +199,7 @@ namespace UiPrototypeTemplateMod
                 _bodyStyle);
 
             GUI.Label(new Rect(104f, 910f, 1712f, 80f), new GUIContent("Prototype-only MelonLoader mod - remove the DLL to restore normal MajdataPlay behavior."), _subtitleStyle);
+            GUI.Label(new Rect(104f, 980f, 1712f, 48f), new GUIContent(DiagnosticsLine), _subtitleStyle);
         }
 
         private static void EnsureGuiResources()
@@ -195,6 +268,152 @@ namespace UiPrototypeTemplateMod
         }
     }
 
+    internal static class KeyboardInput
+    {
+        private static readonly MethodInfo GetKeyDownMethod = typeof(Input).GetMethod("GetKeyDown", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(KeyCode) }, null);
+
+        public static bool GetKeyDown(KeyCode key)
+        {
+            if (GetKeyDownMethod == null)
+            {
+                return false;
+            }
+
+            return Convert.ToBoolean(GetKeyDownMethod.Invoke(null, new object[] { key }));
+        }
+    }
+
+    internal sealed class MajdataInputAdapter
+    {
+        private const BindingFlags StaticPublic = BindingFlags.Public | BindingFlags.Static;
+        private readonly MethodInfo _getButtonDown;
+        private readonly MethodInfo _getInputDown;
+        private readonly object _a3Button;
+        private readonly object _a4Button;
+        private readonly object _a5Button;
+        private readonly object _a6Button;
+        private readonly object _a3Sensor;
+        private readonly object _a4Sensor;
+        private readonly object _a5Sensor;
+        private readonly object _a6Sensor;
+
+        private MajdataInputAdapter(
+            MethodInfo getButtonDown,
+            MethodInfo getInputDown,
+            object a3Button,
+            object a4Button,
+            object a5Button,
+            object a6Button,
+            object a3Sensor,
+            object a4Sensor,
+            object a5Sensor,
+            object a6Sensor)
+        {
+            _getButtonDown = getButtonDown;
+            _getInputDown = getInputDown;
+            _a3Button = a3Button;
+            _a4Button = a4Button;
+            _a5Button = a5Button;
+            _a6Button = a6Button;
+            _a3Sensor = a3Sensor;
+            _a4Sensor = a4Sensor;
+            _a5Sensor = a5Sensor;
+            _a6Sensor = a6Sensor;
+        }
+
+        public bool IsAvailable
+        {
+            get { return _getButtonDown != null || _getInputDown != null; }
+        }
+
+        public static MajdataInputAdapter Create()
+        {
+            try
+            {
+                Type inputManagerType = Type.GetType("MajdataPlay.IO.InputManager, Assembly-CSharp", false);
+                Type buttonZoneType = Type.GetType("MajdataPlay.IO.ButtonZone, Assembly-CSharp", false);
+                Type sensorAreaType = Type.GetType("MajdataPlay.IO.SensorArea, Assembly-CSharp", false);
+                if (inputManagerType == null || buttonZoneType == null)
+                {
+                    return new MajdataInputAdapter(null, null, null, null, null, null, null, null, null, null);
+                }
+
+                MethodInfo getButtonDown = inputManagerType.GetMethod("GetButtonDown", StaticPublic, null, new[] { typeof(int), buttonZoneType }, null);
+                MethodInfo getInputDown = null;
+                object a3Sensor = null;
+                object a4Sensor = null;
+                object a5Sensor = null;
+                object a6Sensor = null;
+
+                if (sensorAreaType != null)
+                {
+                    getInputDown = inputManagerType.GetMethod("GetInputDown", StaticPublic, null, new[] { typeof(int), buttonZoneType, sensorAreaType }, null);
+                    a3Sensor = Enum.Parse(sensorAreaType, "A3");
+                    a4Sensor = Enum.Parse(sensorAreaType, "A4");
+                    a5Sensor = Enum.Parse(sensorAreaType, "A5");
+                    a6Sensor = Enum.Parse(sensorAreaType, "A6");
+                }
+
+                return new MajdataInputAdapter(
+                    getButtonDown,
+                    getInputDown,
+                    Enum.Parse(buttonZoneType, "A3"),
+                    Enum.Parse(buttonZoneType, "A4"),
+                    Enum.Parse(buttonZoneType, "A5"),
+                    Enum.Parse(buttonZoneType, "A6"),
+                    a3Sensor,
+                    a4Sensor,
+                    a5Sensor,
+                    a6Sensor);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning("Majdata input reflection unavailable: " + ex.Message);
+                return new MajdataInputAdapter(null, null, null, null, null, null, null, null, null, null);
+            }
+        }
+
+        public bool TryRead(out RawPrototypeInput input)
+        {
+            input = null;
+            if (!IsAvailable)
+            {
+                return false;
+            }
+
+            try
+            {
+                input = new RawPrototypeInput(
+                    PrototypeInputSource.MajdataReflection,
+                    ReadButton(_a3Button, _a3Sensor),
+                    ReadButton(_a4Button, _a4Sensor),
+                    ReadButton(_a5Button, _a5Sensor),
+                    ReadButton(_a6Button, _a6Sensor));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning("Majdata input reflection read failed; using keyboard fallback. " + ex.Message);
+                return false;
+            }
+        }
+
+        private bool ReadButton(object button, object sensor)
+        {
+            if (_getInputDown != null && sensor != null)
+            {
+                return Convert.ToBoolean(_getInputDown.Invoke(null, new[] { (object)0, button, sensor }));
+            }
+
+            if (_getButtonDown != null)
+            {
+                return Convert.ToBoolean(_getButtonDown.Invoke(null, new[] { (object)0, button }));
+            }
+
+            return false;
+        }
+    }
+
     public sealed class PrototypeOverlayBehaviour : MonoBehaviour
     {
         private GameObject _canvasObject;
@@ -251,6 +470,7 @@ namespace UiPrototypeTemplateMod
             AddText("Title", "MAJDATA UI PROTOTYPE", 72, FontStyle.Bold, new Vector2(0f, 170f), new Vector2(1700f, 120f));
             AddText("Subtitle", "Template mod takeover is active", 34, FontStyle.Normal, new Vector2(0f, 80f), new Vector2(1700f, 80f));
             AddText("Body", "This placeholder intentionally covers the normal game screen.", 42, FontStyle.Normal, new Vector2(0f, -70f), new Vector2(1500f, 120f));
+            AddText("Diagnostics", PrototypeTemplateMod.DiagnosticsLine, 30, FontStyle.Normal, new Vector2(0f, -220f), new Vector2(1700f, 70f));
             AddText("Footer", "Prototype-only MelonLoader mod - remove the DLL to restore normal MajdataPlay behavior.", 28, FontStyle.Normal, new Vector2(0f, -410f), new Vector2(1700f, 80f));
             MelonLogger.Msg("UI prototype canvas placeholder installed.");
         }

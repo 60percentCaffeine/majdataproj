@@ -29,6 +29,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majda
 
 The tests cover the Unity-free song-first prototype state machine and write results under `ui-prototype-template-mod\artifacts\unit`.
 
+## Input
+
+Prototype logic consumes semantic actions from `UiPrototypeTemplateMod.Core`, not direct Unity keys. The adapter prefers MajdataPlay input reflection for A3/A6/A4/A5 when that API is available, and otherwise uses the keyboard fallback:
+
+```text
+Next / harder: Right, Down, D
+Previous / easier: Left, Up, A
+OK: Enter, Space
+Back: Escape, Backspace
+```
+
+The active input source is logged at startup and shown in the prototype diagnostics line.
+
 ## Install
 
 From the project root:
@@ -58,6 +71,7 @@ Expected log lines in `Majdata Hub\game\MelonLoader\Latest.log`:
 UI Prototype Template Mod v0.1.0
 [UI Prototype Template Mod] UI prototype takeover active - normal game UI is visually replaced.
 [UI Prototype Template Mod] Prototype core ready: phase=SongSelect song=MAJTITLE difficulty=Basic
+[UI Prototype Template Mod] Prototype input source: Input: KeyboardFallback
 [UI Prototype Template Mod] UI prototype canvas placeholder installed.
 ```
 
