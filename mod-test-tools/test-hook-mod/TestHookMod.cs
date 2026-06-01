@@ -74,6 +74,156 @@ namespace TestHookMod
         }
     }
 
+    public static class FrameTimingProbe
+    {
+        private static readonly object Sync = new object();
+        private static readonly List<double> Samples = new List<double>(2048);
+        private static bool _active;
+        private static int _startFrame;
+        private static int _lastFrame;
+        private static double _startedAt;
+        private static double _lastSampleAt;
+        private static UnityEngine.GameObject _recorderObject;
+        private static bool _skipNextSample;
+
+        public static void Reset()
+        {
+            EnsureRecorder();
+            lock (Sync)
+            {
+                Samples.Clear();
+                _active = true;
+                _startFrame = UnityEngine.Time.frameCount;
+                _lastFrame = _startFrame;
+                _startedAt = UnityEngine.Time.realtimeSinceStartup;
+                _lastSampleAt = _startedAt;
+                _skipNextSample = true;
+            }
+        }
+
+        public static void EnsureRecorder()
+        {
+            if (_recorderObject != null)
+            {
+                return;
+            }
+
+            _recorderObject = new UnityEngine.GameObject("TestHookMod.FrameTimingProbe");
+            UnityEngine.Object.DontDestroyOnLoad(_recorderObject);
+            _recorderObject.AddComponent<FrameTimingRecorder>();
+        }
+
+        public static FrameTimingSnapshot Read()
+        {
+            double[] samples;
+            int startFrame;
+            int lastFrame;
+            double startedAt;
+            double lastSampleAt;
+
+            lock (Sync)
+            {
+                samples = Samples.ToArray();
+                startFrame = _startFrame;
+                lastFrame = _lastFrame;
+                startedAt = _startedAt;
+                lastSampleAt = _lastSampleAt;
+            }
+
+            Array.Sort(samples);
+            double sum = 0;
+            int dropped = 0;
+            for (int i = 0; i < samples.Length; i++)
+            {
+                sum += samples[i];
+                if (samples[i] > (1.0 / 30.0))
+                {
+                    dropped++;
+                }
+            }
+
+            double p95 = samples.Length == 0 ? 0 : samples[Math.Min(samples.Length - 1, (int)Math.Ceiling(samples.Length * 0.95) - 1)];
+            double max = samples.Length == 0 ? 0 : samples[samples.Length - 1];
+            return new FrameTimingSnapshot
+            {
+                SampleCount = samples.Length,
+                StartFrame = startFrame,
+                EndFrame = lastFrame,
+                SamplingWindowSeconds = Math.Max(0, lastSampleAt - startedAt),
+                AverageFps = sum <= 0 ? 0 : samples.Length / sum,
+                P95FrameTimeMs = p95 * 1000.0,
+                MaxFrameTimeMs = max * 1000.0,
+                DroppedFrameRatio = samples.Length == 0 ? 0 : (double)dropped / samples.Length,
+                TargetFrameRate = -1,
+                VSyncCount = -1
+            };
+        }
+
+        public static void Stop()
+        {
+            lock (Sync)
+            {
+                _active = false;
+            }
+        }
+
+        public static void RecordFrame()
+        {
+            lock (Sync)
+            {
+                if (!_active)
+                {
+                    return;
+                }
+
+                int frame = UnityEngine.Time.frameCount;
+                if (frame == _lastFrame)
+                {
+                    return;
+                }
+
+                float delta = UnityEngine.Time.unscaledDeltaTime;
+                if (float.IsNaN(delta) || float.IsInfinity(delta) || delta < 0)
+                {
+                    return;
+                }
+
+                _lastFrame = frame;
+                _lastSampleAt = UnityEngine.Time.realtimeSinceStartup;
+                if (_skipNextSample)
+                {
+                    _skipNextSample = false;
+                    _startedAt = _lastSampleAt;
+                    return;
+                }
+
+                Samples.Add(delta);
+            }
+        }
+    }
+
+    public sealed class FrameTimingRecorder : UnityEngine.MonoBehaviour
+    {
+        public void Update()
+        {
+            FrameTimingProbe.RecordFrame();
+        }
+    }
+
+    public sealed class FrameTimingSnapshot
+    {
+        public int SampleCount { get; set; }
+        public int StartFrame { get; set; }
+        public int EndFrame { get; set; }
+        public double SamplingWindowSeconds { get; set; }
+        public double AverageFps { get; set; }
+        public double P95FrameTimeMs { get; set; }
+        public double MaxFrameTimeMs { get; set; }
+        public double DroppedFrameRatio { get; set; }
+        public int TargetFrameRate { get; set; }
+        public int VSyncCount { get; set; }
+    }
+
     internal sealed class BridgeServer : IDisposable
     {
         private readonly string _host;

@@ -102,3 +102,30 @@
 - Notes:
   - The current candidate mods did not add, remove, or change any monitored persistent file during the boot probe.
   - The canary intentionally does not monitor `UserData/TestHookMod`, log files, or `.scratch` artifacts because those are expected test harness outputs.
+
+## 2026-06-01 - Issue 20: menu FPS regression canary
+
+- Added `MenuFpsRegressionCanaryTests.StableTitleMenuFrameTimingStaysWithinConservativeThresholds`.
+- Added a hook-side `FrameTimingProbe` and `FrameTimingRecorder` in `TestHookMod`:
+  - the probe creates a `MonoBehaviour` recorder on demand so samples are captured from Unity's frame update loop;
+  - `Reset` arms a fixed sampling window and discards the first post-reset frame delta to avoid counting the eval/reset stall;
+  - `Read` reports sample count, start/end frame, sampling window seconds, average FPS, p95 frame time, max frame time, and dropped-frame ratio using a 33.3 ms dropped-frame budget.
+- The canary waits for a stable Title menu state before sampling:
+  - Unity active scene is loaded;
+  - `SceneSwitcher.CurrentScene` is `Title`;
+  - `SongStorage` is ready;
+  - frame count and realtime both advance across stable samples.
+- Regression gates are intentionally conservative for local Windows game launches:
+  - at least 120 samples over the five-second window;
+  - frame count advances and the observed sampling window is at least four seconds;
+  - average FPS is at least 30;
+  - p95 frame time is at most 50 ms;
+  - dropped-frame ratio is at most 10%.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `MenuFpsRegressionCanaryTests`: passed, 1/1, duration 56s.
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`: passed, 12/12, duration 5m 35s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - `Application.targetFrameRate` and `QualitySettings.vSyncCount` are not readable through the Unity reference assemblies available to the hook compiler, so the canary relies on sampled `Time.unscaledDeltaTime` metrics instead.
+  - Isolated max-frame spikes were observed during local launches while p95 and dropped-frame ratio stayed healthy; max frame time is still reported in failure details, but it is not used as a standalone failure gate.
