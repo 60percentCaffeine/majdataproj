@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Threading;
 using MelonLoader;
 using UiPrototypeTemplateMod.Core;
 using UnityEngine;
@@ -24,9 +25,14 @@ namespace UiPrototypeTemplateMod
         private static bool _loggedFirstGui;
         private static GameObject _runtimeOverlayObject;
         private static string _diagnosticsLine = "Input: initializing";
+        private static object _activeSession;
         private object _session;
         private MajdataInputAdapter _majdataInput;
         private GameObject _overlayObject;
+        private SynchronizationContext _mainThreadContext;
+        private Timer _tickTimer;
+        private int _tickPending;
+        private bool _loggedTimerTick;
 
         static PrototypeTemplateMod()
         {
@@ -38,11 +44,14 @@ namespace UiPrototypeTemplateMod
             MelonLogger.Msg(ActivationMessage);
             PrototypeSession session = PrototypeSession.CreateDefault();
             _session = session;
+            _activeSession = session;
             _majdataInput = MajdataInputAdapter.Create();
+            _mainThreadContext = SynchronizationContext.Current;
             _diagnosticsLine = "Input: " + (_majdataInput.IsAvailable ? PrototypeInputSource.MajdataReflection.ToString() : PrototypeInputSource.KeyboardFallback.ToString());
             MelonLogger.Msg("Prototype core ready: phase=" + session.Phase + " song=" + session.SelectedSong.Title + " difficulty=" + session.SelectedDifficulty.Name);
             MelonLogger.Msg("Prototype input source: " + _diagnosticsLine);
             EnsureOverlayObject();
+            StartTickTimer();
         }
 
         public override void OnUpdate()
@@ -59,6 +68,12 @@ namespace UiPrototypeTemplateMod
 
         public override void OnApplicationQuit()
         {
+            if (_tickTimer != null)
+            {
+                _tickTimer.Dispose();
+                _tickTimer = null;
+            }
+
             Time.timeScale = 1f;
         }
 
@@ -96,6 +111,11 @@ namespace UiPrototypeTemplateMod
             get { return _diagnosticsLine; }
         }
 
+        internal static object ActiveSession
+        {
+            get { return _activeSession; }
+        }
+
         private void UpdatePrototypeStateFromInput()
         {
             PrototypeSession session = _session as PrototypeSession;
@@ -127,6 +147,47 @@ namespace UiPrototypeTemplateMod
             }
 
             _diagnosticsLine = "Input: " + frame.Source + " Actions: " + JoinActions(frame);
+            PrototypeOverlayBehaviour.RefreshAll();
+        }
+
+        private void StartTickTimer()
+        {
+            if (_tickTimer != null || _mainThreadContext == null)
+            {
+                return;
+            }
+
+            _tickTimer = new Timer(TimerTick, null, 100, 50);
+            MelonLogger.Msg("Prototype input timer started.");
+        }
+
+        private void TimerTick(object state)
+        {
+            if (Interlocked.Exchange(ref _tickPending, 1) == 1)
+            {
+                return;
+            }
+
+            _mainThreadContext.Post(TickOnMainThread, null);
+        }
+
+        private void TickOnMainThread(object state)
+        {
+            try
+            {
+                EnsureOverlayObject();
+                UpdatePrototypeStateFromInput();
+                Time.timeScale = 0f;
+                if (!_loggedTimerTick)
+                {
+                    MelonLogger.Msg("Prototype input timer reached Unity main thread.");
+                    _loggedTimerTick = true;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _tickPending, 0);
+            }
         }
 
         private static RawPrototypeInput ReadKeyboardFallback()
@@ -416,13 +477,21 @@ namespace UiPrototypeTemplateMod
 
     public sealed class PrototypeOverlayBehaviour : MonoBehaviour
     {
+        private static readonly System.Collections.Generic.List<PrototypeOverlayBehaviour> Instances = new System.Collections.Generic.List<PrototypeOverlayBehaviour>();
         private GameObject _canvasObject;
+        private GameObject _contentRoot;
         private bool _loggedUpdate;
 
         public void Awake()
         {
+            Instances.Add(this);
             MelonLogger.Msg("UI prototype overlay behaviour awake.");
             InstallCanvasFallback();
+        }
+
+        public void OnDestroy()
+        {
+            Instances.Remove(this);
         }
 
         public void Start()
@@ -437,6 +506,17 @@ namespace UiPrototypeTemplateMod
             {
                 MelonLogger.Msg("UI prototype overlay behaviour is ticking.");
                 _loggedUpdate = true;
+            }
+        }
+
+        public static void RefreshAll()
+        {
+            for (int i = 0; i < Instances.Count; i++)
+            {
+                if (Instances[i] != null)
+                {
+                    Instances[i].RefreshCanvas();
+                }
             }
         }
 
@@ -460,25 +540,175 @@ namespace UiPrototypeTemplateMod
             canvas.sortingOrder = 32767;
             _canvasObject.AddComponent<CanvasScaler>();
             _canvasObject.AddComponent<GraphicRaycaster>();
+            RefreshCanvas();
+            MelonLogger.Msg("UI prototype song-first canvas installed.");
+        }
 
-            GameObject panelObject = new GameObject("Full Screen Prototype Blocker");
-            panelObject.transform.SetParent(_canvasObject.transform, false);
+        private void RefreshCanvas()
+        {
+            if (_canvasObject == null)
+            {
+                return;
+            }
+
+            if (_contentRoot != null)
+            {
+                UnityEngine.Object.Destroy(_contentRoot);
+            }
+
+            _contentRoot = new GameObject("Song First Prototype Content");
+            _contentRoot.transform.SetParent(_canvasObject.transform, false);
+
+            GameObject panelObject = CreateObject("Full Screen Prototype Blocker");
             Image panel = panelObject.AddComponent<Image>();
             panel.color = new Color(0.02f, 0.02f, 0.025f, 0.98f);
             Stretch(panel.rectTransform);
 
-            AddText("Title", "MAJDATA UI PROTOTYPE", 72, FontStyle.Bold, new Vector2(0f, 170f), new Vector2(1700f, 120f));
-            AddText("Subtitle", "Template mod takeover is active", 34, FontStyle.Normal, new Vector2(0f, 80f), new Vector2(1700f, 80f));
-            AddText("Body", "This placeholder intentionally covers the normal game screen.", 42, FontStyle.Normal, new Vector2(0f, -70f), new Vector2(1500f, 120f));
-            AddText("Diagnostics", PrototypeTemplateMod.DiagnosticsLine, 30, FontStyle.Normal, new Vector2(0f, -220f), new Vector2(1700f, 70f));
-            AddText("Footer", "Prototype-only MelonLoader mod - remove the DLL to restore normal MajdataPlay behavior.", 28, FontStyle.Normal, new Vector2(0f, -410f), new Vector2(1700f, 80f));
-            MelonLogger.Msg("UI prototype canvas placeholder installed.");
+            PrototypeSession session = PrototypeTemplateMod.ActiveSession as PrototypeSession;
+            if (session == null)
+            {
+                AddText("Title", "MAJDATA UI PROTOTYPE", 72, FontStyle.Bold, new Vector2(0f, 140f), new Vector2(1700f, 120f));
+                AddText("Body", "Prototype state is initializing.", 42, FontStyle.Normal, new Vector2(0f, -40f), new Vector2(1500f, 120f));
+                AddText("Diagnostics", PrototypeTemplateMod.DiagnosticsLine, 30, FontStyle.Normal, new Vector2(0f, -220f), new Vector2(1700f, 70f));
+                return;
+            }
+
+            DrawSongFirstFlow(session);
+        }
+
+        private void DrawSongFirstFlow(PrototypeSession session)
+        {
+            PrototypeSong song = session.SelectedSong;
+            PrototypeDifficulty difficulty = session.SelectedDifficulty;
+            string phase = session.Phase.ToString();
+
+            AddText("Header", "SONG-FIRST SELECTION PROTOTYPE", 54, FontStyle.Bold, new Vector2(0f, 448f), new Vector2(1780f, 80f));
+            AddText("Phase", "Phase: " + phase + "    Song: " + song.Title + "    Difficulty: " + difficulty.Name + " " + difficulty.Level, 28, FontStyle.Normal, new Vector2(0f, 386f), new Vector2(1780f, 60f));
+            AddText("Diagnostics", PrototypeTemplateMod.DiagnosticsLine, 24, FontStyle.Normal, new Vector2(0f, -476f), new Vector2(1780f, 44f));
+
+            DrawCarousel(session);
+            DrawSongDetails(song);
+            DrawDifficulties(session);
+            DrawPhasePanel(session);
+            DrawPrompts(session.Phase);
+        }
+
+        private void DrawCarousel(PrototypeSession session)
+        {
+            int count = session.Songs.Count;
+            int previous = session.SelectedSongIndex == 0 ? count - 1 : session.SelectedSongIndex - 1;
+            int next = session.SelectedSongIndex == count - 1 ? 0 : session.SelectedSongIndex + 1;
+
+            AddPanel("Previous Song Panel", new Vector2(-620f, 190f), new Vector2(420f, 150f), new Color(0.12f, 0.16f, 0.2f, 0.86f));
+            AddPanel("Current Song Panel", new Vector2(0f, 190f), new Vector2(620f, 190f), new Color(0.1f, 0.34f, 0.42f, 0.94f));
+            AddPanel("Next Song Panel", new Vector2(620f, 190f), new Vector2(420f, 150f), new Color(0.12f, 0.16f, 0.2f, 0.86f));
+
+            AddText("Previous Song", session.Songs[previous].Title, 28, FontStyle.Normal, new Vector2(-620f, 190f), new Vector2(380f, 110f));
+            AddText("Current Song", session.SelectedSong.Title, 44, FontStyle.Bold, new Vector2(0f, 204f), new Vector2(580f, 100f));
+            AddText("Current Category", session.SelectedSong.Category, 24, FontStyle.Normal, new Vector2(0f, 138f), new Vector2(580f, 42f));
+            AddText("Next Song", session.Songs[next].Title, 28, FontStyle.Normal, new Vector2(620f, 190f), new Vector2(380f, 110f));
+        }
+
+        private void DrawSongDetails(PrototypeSong song)
+        {
+            AddPanel("Song Details Panel", new Vector2(-480f, -54f), new Vector2(770f, 310f), new Color(0.08f, 0.09f, 0.12f, 0.9f));
+            AddText("Song Title", song.Title, 42, FontStyle.Bold, new Vector2(-480f, 42f), new Vector2(700f, 62f));
+            AddText("Song Artist", song.Artist + "    BPM " + song.Bpm, 28, FontStyle.Normal, new Vector2(-480f, -10f), new Vector2(700f, 44f));
+            AddText("Song Meta", song.Category + "    " + song.Badge + FlagText(song), 24, FontStyle.Normal, new Vector2(-480f, -62f), new Vector2(700f, 44f));
+            AddText("Song Score", "Best visible per difficulty: ranks and DX-score-like values stay available before choosing difficulty.", 23, FontStyle.Normal, new Vector2(-480f, -138f), new Vector2(680f, 80f));
+        }
+
+        private void DrawDifficulties(PrototypeSession session)
+        {
+            PrototypeSong song = session.SelectedSong;
+            float startX = -760f;
+            for (int i = 0; i < song.Difficulties.Count; i++)
+            {
+                PrototypeDifficulty diff = song.Difficulties[i];
+                bool selected = i == session.SelectedDifficultyIndex;
+                Color color = selected ? new Color(0.95f, 0.72f, 0.18f, 0.96f) : diff.CanSelect ? new Color(0.18f, 0.24f, 0.32f, 0.92f) : new Color(0.18f, 0.18f, 0.18f, 0.72f);
+                Vector2 position = new Vector2(startX + i * 305f, -284f);
+                AddPanel("Difficulty " + i, position, new Vector2(270f, 126f), color);
+                AddText("Difficulty Name " + i, diff.Name + " " + diff.Level, 24, FontStyle.Bold, new Vector2(position.x, position.y + 30f), new Vector2(250f, 38f));
+                AddText("Difficulty Score " + i, diff.CanSelect ? diff.Rank + "  " + diff.DxScore : diff.Locked ? "LOCKED" : "UNAVAILABLE", 22, FontStyle.Normal, new Vector2(position.x, position.y - 22f), new Vector2(250f, 38f));
+            }
+        }
+
+        private void DrawPhasePanel(PrototypeSession session)
+        {
+            string title;
+            string body;
+            if (session.Phase == PrototypePhase.SongSelect)
+            {
+                title = "BROWSE SONGS";
+                body = "A3/A6 move through songs. Difficulty is context only until OK.";
+            }
+            else if (session.Phase == PrototypePhase.DifficultySelect)
+            {
+                title = "DIFFICULTY SELECT";
+                body = "Selected song remains fixed. A3/A6 now change difficulty.";
+            }
+            else
+            {
+                title = "CONFIRMED";
+                body = "Prototype confirmation reached. Back returns to difficulty selection.";
+            }
+
+            AddPanel("Phase Panel", new Vector2(520f, -54f), new Vector2(690f, 310f), new Color(0.2f, 0.12f, 0.28f, 0.88f));
+            AddText("Phase Panel Title", title, 44, FontStyle.Bold, new Vector2(520f, 30f), new Vector2(620f, 70f));
+            AddText("Phase Panel Body", body, 30, FontStyle.Normal, new Vector2(520f, -76f), new Vector2(600f, 130f));
+        }
+
+        private void DrawPrompts(PrototypePhase phase)
+        {
+            string prompts = phase == PrototypePhase.SongSelect
+                ? "A3 Next Song    A6 Previous Song    A4 OK    A5 Category/Back"
+                : phase == PrototypePhase.DifficultySelect
+                    ? "A3 Harder    A6 Easier    A4 Confirm    A5 Back to Songs"
+                    : "A5 Back to Difficulty";
+
+            AddPanel("Prompt Bar", new Vector2(0f, -408f), new Vector2(1780f, 72f), new Color(0.05f, 0.06f, 0.08f, 0.94f));
+            AddText("Prompts", prompts, 28, FontStyle.Bold, new Vector2(0f, -408f), new Vector2(1720f, 52f));
+        }
+
+        private static string FlagText(PrototypeSong song)
+        {
+            string flags = string.Empty;
+            if (song.IsLong)
+            {
+                flags += "    LONG";
+            }
+
+            if (song.IsSpecial)
+            {
+                flags += "    SPECIAL";
+            }
+
+            return flags;
+        }
+
+        private GameObject CreateObject(string name)
+        {
+            GameObject obj = new GameObject(name);
+            obj.transform.SetParent(_contentRoot.transform, false);
+            return obj;
+        }
+
+        private void AddPanel(string name, Vector2 position, Vector2 dimensions, Color color)
+        {
+            GameObject obj = CreateObject(name);
+            Image image = obj.AddComponent<Image>();
+            image.color = color;
+            RectTransform rect = image.rectTransform;
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = dimensions;
         }
 
         private void AddText(string name, string value, int size, FontStyle style, Vector2 position, Vector2 dimensions)
         {
-            GameObject textObject = new GameObject(name);
-            textObject.transform.SetParent(_canvasObject.transform, false);
+            GameObject textObject = CreateObject(name);
             Text text = textObject.AddComponent<Text>();
             text.text = value;
             text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");

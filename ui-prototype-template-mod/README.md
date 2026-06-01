@@ -72,10 +72,11 @@ UI Prototype Template Mod v0.1.0
 [UI Prototype Template Mod] UI prototype takeover active - normal game UI is visually replaced.
 [UI Prototype Template Mod] Prototype core ready: phase=SongSelect song=MAJTITLE difficulty=Basic
 [UI Prototype Template Mod] Prototype input source: Input: KeyboardFallback
-[UI Prototype Template Mod] UI prototype canvas placeholder installed.
+[UI Prototype Template Mod] UI prototype song-first canvas installed.
+[UI Prototype Template Mod] Prototype input timer reached Unity main thread.
 ```
 
-The game window should be covered by a full-screen placeholder labelled `MAJDATA UI PROTOTYPE`.
+The game window should be covered by the song-first selection prototype.
 
 ## Remove
 
