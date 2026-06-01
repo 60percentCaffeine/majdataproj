@@ -81,3 +81,24 @@
 - Notes:
   - Reflection sets the backing field for `Majdata<GameInfo>.Instance`; the exposed property returns by reference and is not practical to assign via reflection.
   - The canary asserts initialization and time progression rather than exact score, because deterministic score assertions are unnecessary for this regression layer.
+
+## 2026-06-01 - Issue 19: no persistent side effects canary
+
+- Added `PersistentSideEffectsCanaryTests.BootRunDoesNotMutatePersistentUserConfigOrProfileFiles`.
+- The canary snapshots a deliberately small set of persistent game/user state files before launch and after shutdown:
+  - `settings.json`;
+  - `Cache/Runtime/config.json`;
+  - `ChartSetting.db`;
+  - `MajScores.db`;
+  - the legacy `MajDatabase.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db.db` score database path.
+- Snapshot comparison is content-based, using existence, byte length, and SHA-256. File mtimes are ignored so harmless rewrites with identical content do not fail the canary.
+- The test boots the real game, waits for a loaded scene plus ready `SongStorage`, shuts down through the harness, then reports any added, removed, or changed monitored path with before/after fingerprints.
+- Expected logs, readiness files, REPL files, and integration artifacts are excluded by design because the canary monitors only the explicit persistent file allowlist instead of scanning runtime/log directories.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `PersistentSideEffectsCanaryTests`: passed, 1/1, duration 35s.
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`: passed, 11/11, duration 5m 25s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - The current candidate mods did not add, remove, or change any monitored persistent file during the boot probe.
+  - The canary intentionally does not monitor `UserData/TestHookMod`, log files, or `.scratch` artifacts because those are expected test harness outputs.
