@@ -40,3 +40,21 @@
 - Notes:
   - The canary intentionally records but does not require `ButtonRingConnected` or `TouchPanelConnected`; hardware presence is not part of the assertion surface.
   - Existing fatal log scanning still applies to the `input-mapping` artifact, so new input initialization errors fail the test while missing physical touch hardware is not asserted as a failure by the canary itself.
+
+## 2026-06-01 - Issue 17: enter and exit flow canary
+
+- Added `EnterExitFlowCanaryTests.GameCanNavigateFromTitleToListAndBackToTitle`.
+- The canary boots the real game with candidate mods installed, waits for the stable Title state plus ready `SongStorage`, then drives a shallow scene flow through `SceneSwitcher.SwitchScene`:
+  - records the initial Title scene state, active scene handle/root count, frame count, active `TitleManager`, and active `SceneSwitcher`;
+  - requests a deterministic switch from `Title` to `List`;
+  - verifies `SceneSwitcher.CurrentScene`, Unity active scene, frame count, and active `ListManager` after entry;
+  - requests a deterministic switch back from `List` to `Title`;
+  - verifies the returned Title scene and active `TitleManager` before shutdown.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `EnterExitFlowCanaryTests`: passed, 1/1, duration 1m 10s.
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`: passed, 9/9, duration 3m 24s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - The scene switch is intentionally API-driven rather than input-driven so the test remains deterministic and does not depend on physical controls.
+  - The canary waits for `SongStorage` before entering `List`; switching earlier can race Title's startup scan and produce less useful failures.
