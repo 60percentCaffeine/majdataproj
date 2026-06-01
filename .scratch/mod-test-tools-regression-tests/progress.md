@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-06-01 - Issue 01: test hook contract smoke test
+
+- Added `TestHookContractSmokeTests.ReadinessFileAndHealthEndpointExposeMatchingHookContract`.
+- The test launches the real MajdataPlay game through `TestHarness.LaunchAsync`, then parses `UserData/TestHookMod/ready.json` from the game directory and calls `/health` through `TestClient`.
+- The readiness file assertions cover:
+  - positive `pid`;
+  - non-empty `host`;
+  - positive `port`;
+  - parseable `startedAt`;
+  - non-empty `bridgeVersion`.
+- The `/health` assertions verify `ok:true`, matching `pid`, `host`, `port`, `bridgeVersion`, and `replEnabled`, plus `mainThreadDispatcherReady:true`.
+- The test shuts down through `HarnessRun.ShutdownOrKillAsync` and collects logs under `.scratch/mod-test-tools-artifacts/test-hook-contract`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `TestHookContractSmokeTests`: passed, 1/1, duration 4s.
+- Notes:
+  - The test uses `JsonDocument` for both readiness and `/health`, so contract regressions fail on structured fields rather than brittle string-only checks.
+  - The current full integration suite had already passed 13/13 before this issue was added; the next full run should include this as the 14th integration test.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
