@@ -58,3 +58,26 @@
 - Notes:
   - The scene switch is intentionally API-driven rather than input-driven so the test remains deterministic and does not depend on physical controls.
   - The canary waits for `SongStorage` before entering `List`; switching earlier can race Title's startup scan and produce less useful failures.
+
+## 2026-06-01 - Issue 18: gameplay dry-run canary
+
+- Added `GameplayDryRunCanaryTests.KnownLocalChartCanEnterGameplayAndAdvanceTime`.
+- The canary boots the real game with candidate mods installed, waits for Title plus ready `SongStorage`, then starts local `MAJTITLE` on `Easy` by constructing the expected internal `GameInfo` and switching to the `Game` scene through `SceneSwitcher`.
+- Runtime changes are kept in-memory and restored before shutdown:
+  - `Mod.AutoPlay` is set to `Enable` so the dry run does not require deterministic physical/input simulation;
+  - global and track volume are set to `0` before gameplay load to avoid audible playback;
+  - original autoplay and volume values are restored during cleanup, and the scene is switched back to `List`.
+- The canary verifies:
+  - the `Game` scene becomes active;
+  - `GamePlayManager`, `NoteManager`, `NotePoolManager`, `NoteLoader`, and `ObjectCounter` are active;
+  - `GamePlayManager.State` reaches `Running`, `IsStart` is true, autoplay is enabled, and audio length is positive;
+  - `NoteLoader.NoteCount` and `ObjectCounter.NoteSum` are nonzero;
+  - `ThisFrameSec` and frame count advance after gameplay starts.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `GameplayDryRunCanaryTests`: passed, 1/1, duration 1m 14s.
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`: passed, 10/10, duration 4m 29s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - Reflection sets the backing field for `Majdata<GameInfo>.Instance`; the exposed property returns by reference and is not practical to assign via reflection.
+  - The canary asserts initialization and time progression rather than exact score, because deterministic score assertions are unnecessary for this regression layer.
