@@ -104,6 +104,27 @@
   - A synchronous `throw` inside the reflected snippet surfaced as `TargetInvocationException`, so the runtime-exception assertion uses a faulted `Task<object>` to exercise the hook's base-exception handling path.
   - The assertions intentionally avoid exact compiler/runtime wording; they pin the stable envelope and broad error identity only.
 
+## 2026-06-01 - Issue 06: Unity main-thread eval regression
+
+- Added `MainThreadEvalRegressionTests.EvalCanReadUnitySceneStateOnMainThreadAndGameContinuesAdvancing`.
+- The test launches the real game and reads Unity state through `/eval-isolated`:
+  - active scene name;
+  - active scene loaded flag;
+  - active scene root `GameObject` count;
+  - active camera count through `Resources.FindObjectsOfTypeAll`;
+  - `Time.frameCount`;
+  - `Time.realtimeSinceStartup`;
+  - `Application.isPlaying`.
+- Assertions verify the first probe can inspect live Unity scene data and sees at least one scene root and camera.
+- After a 1500 ms delay, the test probes again and verifies the active scene is still loaded, frame count advanced, and realtime advanced.
+- Cleanup shuts down through the harness and collects logs under `.scratch/mod-test-tools-artifacts/main-thread-eval`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `MainThreadEvalRegressionTests`: passed, 1/1, duration 14s.
+- Notes:
+  - The first attempt assumed the scene name would stay constant between samples; the game naturally transitioned from `Init` to `Title`, so the final assertion allows normal boot scene transitions while still requiring loaded scene state and frame/time progression.
+  - The selected invariant is intentionally broad: eval can safely inspect Unity scene roots/cameras and the game continues advancing afterward.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
