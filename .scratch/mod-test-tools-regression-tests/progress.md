@@ -166,6 +166,151 @@
   - This test intentionally bypasses the harness convenience shutdown method for the main assertion so the `/shutdown` response contract is directly covered.
   - The existing fallback process cleanup remains part of the test path, matching how the harness protects later runs from leaked Windows processes.
 
+## 2026-06-01 - Issue 09: sample mod invariant regression tests
+
+- Expanded `SampleModIntegrationTests.SampleModInvariantSuitePassesInMajdataPlay` from a single core eval smoke test into an invariant suite.
+- The suite verifies inside MajdataPlay:
+  - `TestMod` assembly is loaded;
+  - `TestMod.Core` assembly is loaded;
+  - `TestMod.TestMod` is discoverable through reflection;
+  - `TestMod.Core.TestModLogic` is discoverable through reflection;
+  - `StartupMessage()` returns `Loaded`;
+  - `AddScore(100, 25)` returns `125`;
+  - `AddScore(100, -5)` keeps the score at `100`.
+- The test always shuts down and collects `.scratch/mod-test-tools-artifacts/integration` logs, then scans `*.log` artifacts for sample-mod startup failures and common unhandled exception shapes including `TestMod failed`, `Unhandled Exception`, `NullReferenceException`, type/load failures, and method failures.
+- Historical validation from the implementation commit:
+  - `dotnet build` for `mod-test-tools/integration/ModTest.Integration.Tests.csproj`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 1/1 xUnit test in 8s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - The install step still emitted the existing REPL `SYSLIB0014` warning from `WebRequest.Create`.
+  - Downstream log/error canaries needed a broader game/MelonLoader fatal-error taxonomy than this sample-mod-focused scan.
+
+## 2026-06-01 - Issue 10: game boot stable state canary
+
+- Added `GameBootCanaryTests.GameBootReachesStableRunningUnityState`.
+- Added shared integration eval/log assertions and disabled xUnit parallelization for the real-game integration assembly because tests share one MajdataPlay install and bridge port.
+- The boot canary launches through the harness, polls `/eval-isolated`, and waits for two consecutive samples with:
+  - same non-empty active scene;
+  - loaded scene state;
+  - advancing `UnityEngine.Time.frameCount`;
+  - increasing realtime;
+  - `Application.isPlaying`;
+  - present/writable `Time.timeScale` API.
+- The test shuts down and scans `.scratch/mod-test-tools-artifacts/boot-stable-state/*.log` for fatal boot lines.
+- Quality fixes made while implementing the canary:
+  - `TestMod.Core.dll` installs under `Mods/TestModLib` with a `TestMod` assembly resolver instead of the root `Mods` folder, eliminating MelonLoader's support-DLL load error;
+  - Test Hook Mod treats missing `UnityEngine.Application.Quit` as an expected fallback path and relies on forced process termination without logging `MissingMethodException`;
+  - `ModTestHarness` serializes runtime ownership by killing stale `MajdataPlay`/REPL processes before launch, retrying locked readiness-file cleanup, waiting for shutdown, and cleaning runtime processes after each test.
+- Historical validation from the implementation commit:
+  - `dotnet build mod-test-tools/integration/ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 2/2 xUnit tests in 24s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - This Unity profile exposes `Time.timeScale` as writable but not readable in managed metadata, so the canary verifies API presence/writability and uses frame/realtime advancement for the actual liveness signal.
+  - `.log.old` files may retain earlier failed-run lines, but current `*.log` artifacts were clean during implementation.
+
+## 2026-06-01 - Issue 11: core assemblies and game types canary
+
+- Added `GameTypeCanaryTests.CoreAssembliesAndRepresentativeGameTypesAreLoadable`.
+- The canary runs a non-mutating AppDomain/type-resolution probe inside MajdataPlay through `/eval-isolated`.
+- It verifies 5 representative assemblies are loaded:
+  - `Assembly-CSharp`;
+  - `MajSimai`;
+  - `UnityEngine.CoreModule`;
+  - `Unity.InputSystem`;
+  - `ManagedBass`.
+- It resolves 9 representative types across manager/input/audio/chart/gameplay surfaces:
+  - `MajdataPlay.GameManager`;
+  - `MajdataPlay.IO.InputManager`;
+  - `MajdataPlay.IO.AudioManager`;
+  - `MajdataPlay.Settings.ChartSetting`;
+  - `MajSimai.SimaiParser`;
+  - `MajdataPlay.Scenes.Game.GamePlayManager`;
+  - `MajdataPlay.Scenes.Game.NoteLoader`;
+  - `MajdataPlay.Scenes.Game.Notes.Controllers.NoteManager`;
+  - `MajdataPlay.Scenes.Game.Buffers.NoteInfo`.
+- Missing assembly/type failures are returned as newline-delimited names in assertion messages, and the test does not instantiate game types or call their methods.
+- Historical validation from the implementation commit:
+  - `dotnet build mod-test-tools/integration/ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 3/3 serialized real-game xUnit tests in 43s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - This canary deliberately checks loadability and type names only; behavior of those systems is left to the focused input/audio/chart/gameplay canaries.
+
+## 2026-06-01 - Issue 12: scene object invariant canary
+
+- Added `SceneObjectCanaryTests.BootedSceneHasBroadUnityAndMajdataObjectInvariants`.
+- The test is a read-only live-scene probe using `UnityEngine.Resources.FindObjectsOfTypeAll` and active scene roots after boot.
+- It verifies broad minimums instead of exact counts:
+  - non-empty active scene name;
+  - at least one active root object;
+  - at least one active/enabled camera;
+  - at least one active/enabled audio listener;
+  - active UI surface via canvas or event system;
+  - active `MajdataPlay.MajComponent` instances;
+  - at least one stable MajdataPlay root/controller component among `GameManager`, `TitleManager`, or `ListManager`.
+- The test avoids instantiating objects, calling controller methods, or mutating scene state; it only counts active components.
+- Historical validation from the implementation commit:
+  - `dotnet build mod-test-tools/integration/ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 4/4 serialized real-game xUnit tests in 46s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - This canary intentionally records no brittle exact object counts.
+  - Downstream UI/gameplay tests should add focused assertions only after intentionally navigating to a specific scene.
+
+## 2026-06-01 - Issue 13: game asset and data load canary
+
+- Added `GameAssetDataCanaryTests.KnownChartMetadataAndAssetPathsResolveAfterBoot`.
+- The canary is a read-only metadata/path check centered on the stable local/built-in `MAJTITLE` chart.
+- It waits up to 60s for TitleManager's delayed chart scan to populate `SongStorage`, then verifies:
+  - `SongStorage` has collections;
+  - at least one non-empty collection;
+  - non-zero `TotalChartCount`;
+  - enumerable songs;
+  - a `MAJTITLE` metadata record;
+  - artist `bbben`;
+  - non-empty hash;
+  - at least 5 levels.
+- It verifies concrete local and built-in asset paths:
+  - `MaiCharts/Original/MAJTITLE/maidata.txt`;
+  - `MaiCharts/Original/MAJTITLE/track.mp3`;
+  - `MaiCharts/Original/MAJTITLE/bg.png`;
+  - built-in `StreamingAssets/MaiCharts/Original/MAJTITLE/maidata.txt`;
+  - built-in `StreamingAssets/MaiCharts/Original/MAJTITLE/track.opus`;
+  - `Skins/default/TapSkins/tap.png`.
+- The local `maidata.txt` is read only to confirm `&title=MAJTITLE`.
+- Historical validation from the implementation commit:
+  - `dotnet build mod-test-tools/integration/ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 5/5 serialized real-game xUnit tests in 1m24s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - Bridge readiness happens before `SongStorage.InitAsync` completes, so the canary must poll for chart metadata readiness rather than sample immediately.
+  - Downstream data/chart tests should keep that startup delay in mind.
+
+## 2026-06-01 - Issue 14: chart parse canary
+
+- Added `ChartParseCanaryTests.KnownGoodChartParsesThroughGameSongDetailPath`, using deterministic `MAJTITLE` from Issue 13.
+- The test waits up to 75s for `SongStorage` to expose `MAJTITLE`, calls the game's normal `ISongDetail.GetMaidataAsync(true)` path, then parses each raw `Fumen` through `MajSimai.SimaiParser.ParseChartAsync` until it finds a chart with timing points.
+- Assertions verify:
+  - known song is found;
+  - title is stable;
+  - parse succeeds;
+  - chart count is at least 5;
+  - selected chart index is in the expected 0-4 range;
+  - timing point count is nonzero;
+  - note count is nonzero;
+  - BPM timing count is nonzero;
+  - first BPM is positive.
+- Historical validation from the implementation commit:
+  - `dotnet build mod-test-tools/integration/ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - `sample-mod/test-integration.ps1`: passed 6/6 serialized real-game xUnit tests in 1m35s.
+  - Integration TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Notes:
+  - `SimaiFile.Charts[i].Fumen` is a raw string, so the canary explicitly calls `SimaiParser.ParseChartAsync`.
+  - The eval compiler cannot emit async state machines in this profile, so async game APIs are invoked with `GetAwaiter().GetResult()` inside a non-async eval snippet.
+  - `ReadOnlySpan<SimaiTimingPoint>` required plain indexed loops rather than LINQ.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
