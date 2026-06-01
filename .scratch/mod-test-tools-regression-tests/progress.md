@@ -37,6 +37,28 @@
   - The persistent session model replays prior statements into later snippets, so a local variable declaration is sufficient to prove session replay.
   - The expected isolated/reset failures are compilation-phase failures; the test intentionally checks phase and `ok:false`, not exact compiler diagnostic text.
 
+## 2026-06-01 - Issue 03: structured eval serialization regression
+
+- Added `StructuredEvalSerializationRegressionTests.EvalReturnsStructuredPrimitiveArrayDictionaryAndDtoShapes`.
+- The test launches the real game and evaluates one object containing:
+  - primitive `Primitive = 123`;
+  - array `Array = new[] { 2, 4, 6 }`;
+  - dictionary entries `alpha = 7` and `beta = 9`;
+  - DTO-shaped anonymous object with `Name = "structured-dto"`, `Score = 42`, and `Active = true`.
+- Assertions parse the eval response JSON and verify:
+  - `ok:true` and `phase:"execution"`;
+  - primitive value is directly usable as a number;
+  - array is a structured object with three `items`, not a string;
+  - dictionary is a structured object with two `entries`, not a string;
+  - DTO is a structured object with named `properties`, not a string.
+- The test shuts down through the harness and collects logs under `.scratch/mod-test-tools-artifacts/structured-eval-serialization`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `StructuredEvalSerializationRegressionTests`: passed, 1/1, duration 13s.
+- Notes:
+  - This locks in the current bounded serializer shape: enumerables use `items`, dictionaries use `entries`, and DTO-like objects expose public `properties`.
+  - The assertions intentionally fail if array/dictionary/DTO values degrade to opaque strings.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
