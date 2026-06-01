@@ -472,3 +472,22 @@
 - Notes:
   - `Screen.fullScreenMode` is not readable through the eval compiler's Unity reference assemblies, so the canary records actual fullscreen state plus configured display settings instead.
   - The full 13-test suite passed after the shared sampler average-FPS correction; the song FPS canary itself also passed in the earlier full run before that correction.
+
+## 2026-06-01 - Final validation: all regression issues
+
+- After adding Issues 01-08 and backfilling `.scratch` progress for Issues 09-14, ran the full real-game integration command:
+  - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File './sample-mod/test-integration.ps1'`
+- Result:
+  - passed 21/21 integration tests;
+  - 0 failed;
+  - 0 skipped;
+  - duration 9m 11s;
+  - TRX artifact: `.scratch/mod-test-tools-artifacts/integration-test-results/integration.trx`.
+- Build/install observations:
+  - Test Hook Mod, REPL client, harness, sample mod core, sample mod adapter, and integration tests rebuilt/installed through the script.
+  - The only warning was the existing REPL `SYSLIB0014` warning for `WebRequest.Create`.
+- Coverage summary:
+  - Issues 01-08 now have dedicated integration regression tests for hook contract, persistent session behavior, structured serialization, serialization bounds/cycles, error envelopes, main-thread Unity eval, config launch overrides, and shutdown behavior.
+  - Issues 09-21 remain covered by the sample mod, boot/type/scene/data/chart/audio/input/navigation/gameplay/persistence/FPS canaries.
+- Caveats:
+  - The unrelated untracked `.scratch/ui-prototype-template-mod/` directory remains outside this work and was intentionally not staged.
