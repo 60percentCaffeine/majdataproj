@@ -9,10 +9,10 @@ namespace ModTestIntegration
 {
     public sealed class SongFpsRegressionCanaryTests
     {
-        private static readonly TimeSpan SampleWindow = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan SampleWindow = TimeSpan.FromSeconds(20);
 
         [Fact]
-        public async Task KnownLocalChartGameplayFrameTimingStaysWithinConservativeThresholds()
+        public async Task KnownLocalHighDifficultyChartGameplayFrameTimingStaysWithinConservativeThresholds()
         {
             string projectRoot = Environment.GetEnvironmentVariable("MODTEST_PROJECT_ROOT");
             Assert.False(string.IsNullOrWhiteSpace(projectRoot));
@@ -30,7 +30,7 @@ namespace ModTestIntegration
                 Assert.True(setupState.Value.GetProperty("SwitchRequested").GetBoolean(), "Game scene switch should be requested.");
                 Assert.Equal("MAJTITLE", setupState.Value.GetProperty("SelectedSongTitle").GetString());
                 Assert.Equal("Normal", setupState.Value.GetProperty("GameMode").GetString());
-                Assert.Equal("Easy", setupState.Value.GetProperty("SelectedLevel").GetString());
+                Assert.Equal("Master", setupState.Value.GetProperty("SelectedLevel").GetString());
                 Assert.Equal("Enable", setupState.Value.GetProperty("RuntimeAutoPlay").GetString());
                 Assert.Equal("1080x1920", setupState.Value.GetProperty("SettingsResolution").GetString());
                 Assert.Equal(120, setupState.Value.GetProperty("SettingsFPSLimit").GetInt32());
@@ -44,22 +44,30 @@ namespace ModTestIntegration
                         && state.GetProperty("ActiveGamePlayManagerCount").GetInt32() > 0
                         && state.GetProperty("GamePlayState").GetString() == "Running"
                         && state.GetProperty("NoteLoaderNoteCount").GetInt64() > 0
-                        && state.GetProperty("ObjectCounterNoteSum").GetInt32() > 0);
+                        && state.GetProperty("ObjectCounterNoteSum").GetInt32() > 0
+                        && state.GetProperty("ActiveGameplayNoteCount").GetInt32() > 0);
 
                 Assert.Equal("Game", running.GetProperty("CurrentScene").GetString());
                 Assert.Equal("MAJTITLE", running.GetProperty("GameInfoSongTitle").GetString());
-                Assert.Equal("Easy", running.GetProperty("GameInfoLevel").GetString());
+                Assert.Equal("Master", running.GetProperty("GameInfoLevel").GetString());
                 Assert.Equal("Normal", running.GetProperty("GameInfoMode").GetString());
                 Assert.True(running.GetProperty("IsAutoplay").GetBoolean(), "Song FPS canary should run in autoplay mode.");
                 Assert.True(running.GetProperty("AudioLength").GetSingle() > 0, "Gameplay should load a positive-length audio track.");
+                Assert.True(running.GetProperty("ActiveGameplayNoteCount").GetInt32() > 0, "Gameplay should have active note objects on screen:\n" + running.GetProperty("ActiveGameplayNoteStateSummary").GetString());
 
                 await ResetFrameTimingProbeAsync(run.Client);
+                float sampleStartSec = running.GetProperty("ThisFrameSec").GetSingle();
                 await Task.Delay(SampleWindow);
                 FrameTimingMetrics metrics = await StopAndReadFrameTimingProbeAsync(run.Client);
+                JsonElement sampled = await ReadGameplayStateAsync(run.Client);
 
-                Assert.True(metrics.SampleCount >= 120, "Song FPS sample count is too low:\n" + metrics.Describe());
+                Assert.Equal("Game", sampled.GetProperty("CurrentScene").GetString());
+                Assert.Equal("Running", sampled.GetProperty("GamePlayState").GetString());
+                Assert.True(sampled.GetProperty("ThisFrameSec").GetSingle() >= sampleStartSec + 18f, "Gameplay time did not advance through the expected sample window.");
+                Assert.True(sampled.GetProperty("ActiveGameplayNoteCount").GetInt32() > 0, "Gameplay should still have active note objects after the 20 second sample:\n" + sampled.GetProperty("ActiveGameplayNoteStateSummary").GetString());
+                Assert.True(metrics.SampleCount >= 480, "Song FPS sample count is too low:\n" + metrics.Describe());
                 Assert.True(metrics.EndFrame > metrics.StartFrame, "Frame count did not advance during song FPS sampling:\n" + metrics.Describe());
-                Assert.True(metrics.SamplingWindowSeconds >= 4.0, "Song FPS sampling window was shorter than expected:\n" + metrics.Describe());
+                Assert.True(metrics.SamplingWindowSeconds >= 18.0, "Song FPS sampling window was shorter than expected:\n" + metrics.Describe());
                 Assert.True(metrics.AverageFps >= 30.0, "Song average FPS regressed below the conservative 30 FPS floor:\n" + metrics.Describe());
                 Assert.True(metrics.P95FrameTimeMs <= 75.0, "Song p95 frame time regressed beyond 75 ms:\n" + metrics.Describe());
                 Assert.True(metrics.DroppedFrameRatio <= 0.20, "Song dropped-frame ratio above 20% using a 33.3 ms frame budget:\n" + metrics.Describe());
@@ -166,7 +174,7 @@ namespace ModTestIntegration
     Array charts = Array.CreateInstance(songDetailType, 1);
     charts.SetValue(selectedSong, 0);
     Array levels = Array.CreateInstance(chartLevelType, 1);
-    object selectedLevel = Enum.Parse(chartLevelType, ""Easy"");
+    object selectedLevel = Enum.Parse(chartLevelType, ""Master"");
     levels.SetValue(selectedLevel, 0);
     object gameInfo = Activator.CreateInstance(gameInfoType, new object[] { Enum.Parse(gameModeType, ""Normal""), charts, levels });
     Type majdataGameInfoType = majdataOpenType.MakeGenericType(gameInfoType);
@@ -331,12 +339,31 @@ namespace ModTestIntegration
             .FirstOrDefault(component => component != null && component.gameObject != null && component.gameObject.activeInHierarchy);
     }
 
+    IEnumerable<UnityEngine.Component> activeGameplayNotes(Type noteInterfaceType) {
+        if (noteInterfaceType == null) {
+            return Enumerable.Empty<UnityEngine.Component>();
+        }
+
+        return UnityEngine.Resources.FindObjectsOfTypeAll(typeof(UnityEngine.MonoBehaviour))
+            .OfType<UnityEngine.Component>()
+            .Where(component => component != null
+                && component.gameObject != null
+                && component.gameObject.activeInHierarchy
+                && noteInterfaceType.IsAssignableFrom(component.GetType()))
+            .Where(component => {
+                var stateProperty = component.GetType().GetProperty(""State"", InstanceFlags);
+                string state = stateProperty == null ? string.Empty : stateProperty.GetValue(component).ToString();
+                return state != ""Start"" && state != ""End"";
+            });
+    }
+
     Type sceneSwitcherType = Type.GetType(""MajdataPlay.SceneSwitcher, Assembly-CSharp"", true);
     Type gamePlayManagerType = Type.GetType(""MajdataPlay.Scenes.Game.GamePlayManager, Assembly-CSharp"", false);
     Type noteManagerType = Type.GetType(""MajdataPlay.Scenes.Game.Notes.Controllers.NoteManager, Assembly-CSharp"", false);
     Type notePoolManagerType = Type.GetType(""MajdataPlay.Scenes.Game.Notes.Controllers.NotePoolManager, Assembly-CSharp"", false);
     Type noteLoaderType = Type.GetType(""MajdataPlay.Scenes.Game.NoteLoader, Assembly-CSharp"", false);
     Type objectCounterType = Type.GetType(""MajdataPlay.Scenes.Game.ObjectCounter, Assembly-CSharp"", false);
+    Type statefulNoteType = Type.GetType(""MajdataPlay.Scenes.Game.Notes.IStatefulNote, Assembly-CSharp"", false);
     Type gameInfoType = Type.GetType(""MajdataPlay.Scenes.Game.GameInfo, Assembly-CSharp"", false);
     Type majdataOpenType = Type.GetType(""MajdataPlay.Majdata`1, Assembly-CSharp"", true);
     var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
@@ -344,6 +371,17 @@ namespace ModTestIntegration
     object notePoolManager = firstActiveComponent(notePoolManagerType);
     object noteLoader = firstActiveComponent(noteLoaderType);
     object objectCounter = firstActiveComponent(objectCounterType);
+    var gameplayNotes = activeGameplayNotes(statefulNoteType).ToArray();
+    string noteStateSummary = string.Join("", "", gameplayNotes
+        .GroupBy(component => component.GetType().GetProperty(""State"", InstanceFlags).GetValue(component).ToString())
+        .OrderBy(group => group.Key)
+        .Select(group => group.Key + "":"" + group.Count()));
+    string noteTypeSummary = string.Join("", "", gameplayNotes
+        .GroupBy(component => component.GetType().Name)
+        .OrderByDescending(group => group.Count())
+        .ThenBy(group => group.Key)
+        .Select(group => group.Key + "":"" + group.Count())
+        .Take(12));
 
     string gameInfoSongTitle = string.Empty;
     string gameInfoLevel = string.Empty;
@@ -375,6 +413,9 @@ namespace ModTestIntegration
         ActiveNotePoolManagerCount = countActiveComponents(notePoolManagerType),
         ActiveNoteLoaderCount = countActiveComponents(noteLoaderType),
         ActiveObjectCounterCount = countActiveComponents(objectCounterType),
+        ActiveGameplayNoteCount = gameplayNotes.Length,
+        ActiveGameplayNoteStateSummary = noteStateSummary,
+        ActiveGameplayNoteTypeSummary = noteTypeSummary,
         GamePlayState = gamePlayManager == null ? string.Empty : gamePlayManagerType.GetProperty(""State"", InstanceFlags).GetValue(gamePlayManager).ToString(),
         ThisFrameSec = gamePlayManager == null ? 0f : Convert.ToSingle(gamePlayManagerType.GetProperty(""ThisFrameSec"", InstanceFlags).GetValue(gamePlayManager)),
         AudioLength = gamePlayManager == null ? 0f : Convert.ToSingle(gamePlayManagerType.GetProperty(""AudioLength"", InstanceFlags).GetValue(gamePlayManager)),
