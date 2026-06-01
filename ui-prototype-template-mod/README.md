@@ -34,13 +34,16 @@ The tests cover the Unity-free song-first prototype state machine and write resu
 Prototype logic consumes semantic actions from `UiPrototypeTemplateMod.Core`, not direct Unity keys. The adapter prefers MajdataPlay input reflection for A3/A6/A4/A5 when that API is available, and otherwise uses the keyboard fallback:
 
 ```text
-Next / harder: Right, Down, D
-Previous / easier: Left, Up, A
+Next / harder: Down, D
+Previous / easier: Up, A
 OK: Enter, Space
 Back: Escape, Backspace
+Switch visual variant: Left Arrow, Right Arrow
 ```
 
 The active input source is logged at startup and shown in the prototype diagnostics line.
+
+The prototype includes exactly three initial visual variants. Each variant displays a large `VARIANT N/3` label and keeps the current song, difficulty, and phase when switching.
 
 ## Install
 

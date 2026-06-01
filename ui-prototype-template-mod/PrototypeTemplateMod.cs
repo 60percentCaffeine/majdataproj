@@ -26,6 +26,7 @@ namespace UiPrototypeTemplateMod
         private static GameObject _runtimeOverlayObject;
         private static string _diagnosticsLine = "Input: initializing";
         private static object _activeSession;
+        private static int _variantIndex;
         private object _session;
         private MajdataInputAdapter _majdataInput;
         private GameObject _overlayObject;
@@ -57,6 +58,7 @@ namespace UiPrototypeTemplateMod
         public override void OnUpdate()
         {
             EnsureOverlayObject();
+            UpdateVariantFromKeyboard();
             UpdatePrototypeStateFromInput();
             Time.timeScale = 0f;
         }
@@ -114,6 +116,16 @@ namespace UiPrototypeTemplateMod
         internal static object ActiveSession
         {
             get { return _activeSession; }
+        }
+
+        internal static int VariantIndex
+        {
+            get { return _variantIndex; }
+        }
+
+        internal static string VariantLabel
+        {
+            get { return "VARIANT " + (_variantIndex + 1) + "/" + PrototypeVariantRouter.VariantCount; }
         }
 
         private void UpdatePrototypeStateFromInput()
@@ -176,6 +188,7 @@ namespace UiPrototypeTemplateMod
             try
             {
                 EnsureOverlayObject();
+                UpdateVariantFromKeyboard();
                 UpdatePrototypeStateFromInput();
                 Time.timeScale = 0f;
                 if (!_loggedTimerTick)
@@ -194,10 +207,30 @@ namespace UiPrototypeTemplateMod
         {
             return new RawPrototypeInput(
                 PrototypeInputSource.KeyboardFallback,
-                KeyboardInput.GetKeyDown(KeyCode.RightArrow) || KeyboardInput.GetKeyDown(KeyCode.DownArrow) || KeyboardInput.GetKeyDown(KeyCode.D),
+                KeyboardInput.GetKeyDown(KeyCode.DownArrow) || KeyboardInput.GetKeyDown(KeyCode.D),
                 KeyboardInput.GetKeyDown(KeyCode.Return) || KeyboardInput.GetKeyDown(KeyCode.Space),
                 KeyboardInput.GetKeyDown(KeyCode.Escape) || KeyboardInput.GetKeyDown(KeyCode.Backspace),
-                KeyboardInput.GetKeyDown(KeyCode.LeftArrow) || KeyboardInput.GetKeyDown(KeyCode.UpArrow) || KeyboardInput.GetKeyDown(KeyCode.A));
+                KeyboardInput.GetKeyDown(KeyCode.UpArrow) || KeyboardInput.GetKeyDown(KeyCode.A));
+        }
+
+        private static void UpdateVariantFromKeyboard()
+        {
+            int previous = _variantIndex;
+            if (KeyboardInput.GetKeyDown(KeyCode.RightArrow))
+            {
+                _variantIndex = PrototypeVariantRouter.Next(_variantIndex);
+            }
+            else if (KeyboardInput.GetKeyDown(KeyCode.LeftArrow))
+            {
+                _variantIndex = PrototypeVariantRouter.Previous(_variantIndex);
+            }
+
+            if (previous != _variantIndex)
+            {
+                _diagnosticsLine = "Variant switched: " + VariantLabel;
+                MelonLogger.Msg("Prototype variant switched to " + VariantLabel);
+                PrototypeOverlayBehaviour.RefreshAll();
+            }
         }
 
         private static string JoinActions(PrototypeInputFrame frame)
@@ -582,15 +615,65 @@ namespace UiPrototypeTemplateMod
             PrototypeDifficulty difficulty = session.SelectedDifficulty;
             string phase = session.Phase.ToString();
 
-            AddText("Header", "SONG-FIRST SELECTION PROTOTYPE", 54, FontStyle.Bold, new Vector2(0f, 448f), new Vector2(1780f, 80f));
-            AddText("Phase", "Phase: " + phase + "    Song: " + song.Title + "    Difficulty: " + difficulty.Name + " " + difficulty.Level, 28, FontStyle.Normal, new Vector2(0f, 386f), new Vector2(1780f, 60f));
+            AddText("Variant Label", PrototypeTemplateMod.VariantLabel, 76, FontStyle.Bold, new Vector2(0f, 454f), new Vector2(1780f, 86f));
+            AddText("Header", "SONG-FIRST SELECTION PROTOTYPE", 34, FontStyle.Bold, new Vector2(0f, 396f), new Vector2(1780f, 50f));
+            AddText("Phase", "Phase: " + phase + "    Song: " + song.Title + "    Difficulty: " + difficulty.Name + " " + difficulty.Level, 26, FontStyle.Normal, new Vector2(0f, 352f), new Vector2(1780f, 48f));
             AddText("Diagnostics", PrototypeTemplateMod.DiagnosticsLine, 24, FontStyle.Normal, new Vector2(0f, -476f), new Vector2(1780f, 44f));
 
+            if (PrototypeTemplateMod.VariantIndex == 0)
+            {
+                DrawSinmaiLikeVariant(session);
+            }
+            else if (PrototypeTemplateMod.VariantIndex == 1)
+            {
+                DrawMajdataHybridVariant(session);
+            }
+            else
+            {
+                DrawCompactFastFlowVariant(session);
+            }
+
+            DrawPrompts(session.Phase);
+        }
+
+        private void DrawSinmaiLikeVariant(PrototypeSession session)
+        {
+            AddText("Variant Name", "Sinmai-like carousel", 24, FontStyle.Normal, new Vector2(0f, 314f), new Vector2(1780f, 34f));
             DrawCarousel(session);
-            DrawSongDetails(song);
+            DrawSongDetails(session.SelectedSong);
             DrawDifficulties(session);
             DrawPhasePanel(session);
-            DrawPrompts(session.Phase);
+        }
+
+        private void DrawMajdataHybridVariant(PrototypeSession session)
+        {
+            AddText("Variant Name", "Majdata-native hybrid list", 24, FontStyle.Normal, new Vector2(0f, 314f), new Vector2(1780f, 34f));
+            AddPanel("Vertical List", new Vector2(-650f, -20f), new Vector2(500f, 650f), new Color(0.07f, 0.1f, 0.13f, 0.92f));
+            for (int i = 0; i < session.Songs.Count; i++)
+            {
+                PrototypeSong row = session.Songs[i];
+                bool selected = i == session.SelectedSongIndex;
+                Vector2 rowPosition = new Vector2(-650f, 220f - i * 112f);
+                AddPanel("Song Row " + i, rowPosition, new Vector2(440f, 82f), selected ? new Color(0.12f, 0.42f, 0.36f, 0.95f) : new Color(0.12f, 0.15f, 0.2f, 0.88f));
+                AddText("Song Row Text " + i, row.Title + "\n" + row.Category, selected ? 25 : 21, selected ? FontStyle.Bold : FontStyle.Normal, rowPosition, new Vector2(410f, 72f));
+            }
+
+            AddPanel("Hybrid Detail", new Vector2(190f, 62f), new Vector2(1050f, 430f), new Color(0.1f, 0.12f, 0.18f, 0.92f));
+            AddText("Hybrid Title", session.SelectedSong.Title, 54, FontStyle.Bold, new Vector2(190f, 184f), new Vector2(970f, 82f));
+            AddText("Hybrid Meta", session.SelectedSong.Artist + "    BPM " + session.SelectedSong.Bpm + "    " + session.SelectedSong.Category + FlagText(session.SelectedSong), 28, FontStyle.Normal, new Vector2(190f, 104f), new Vector2(970f, 52f));
+            DrawDifficulties(session);
+            DrawPhasePanel(session);
+        }
+
+        private void DrawCompactFastFlowVariant(PrototypeSession session)
+        {
+            AddText("Variant Name", "Compact fast-flow hybrid", 24, FontStyle.Normal, new Vector2(0f, 314f), new Vector2(1780f, 34f));
+            AddPanel("Compact Main", new Vector2(0f, 72f), new Vector2(1620f, 390f), new Color(0.1f, 0.11f, 0.12f, 0.94f));
+            AddText("Compact Title", session.SelectedSong.Title, 60, FontStyle.Bold, new Vector2(-320f, 158f), new Vector2(880f, 92f));
+            AddText("Compact Meta", session.SelectedSong.Artist + " / " + session.SelectedSong.Category + " / BPM " + session.SelectedSong.Bpm + FlagText(session.SelectedSong), 30, FontStyle.Normal, new Vector2(-320f, 82f), new Vector2(880f, 56f));
+            AddText("Compact Phase", session.Phase == PrototypePhase.SongSelect ? "Pick song first" : session.Phase == PrototypePhase.DifficultySelect ? "Now choose difficulty" : "Confirmed", 40, FontStyle.Bold, new Vector2(520f, 118f), new Vector2(520f, 80f));
+            AddText("Compact Difficulty", session.SelectedDifficulty.Name + " " + session.SelectedDifficulty.Level + "\n" + session.SelectedDifficulty.Rank + " " + session.SelectedDifficulty.DxScore, 34, FontStyle.Bold, new Vector2(520f, -8f), new Vector2(520f, 132f));
+            DrawDifficulties(session);
         }
 
         private void DrawCarousel(PrototypeSession session)
