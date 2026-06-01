@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using MelonLoader;
 using UiPrototypeTemplateMod.Core;
@@ -364,17 +365,53 @@ namespace UiPrototypeTemplateMod
 
     internal static class KeyboardInput
     {
-        private static readonly MethodInfo GetKeyDownMethod = typeof(Input).GetMethod("GetKeyDown", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(KeyCode) }, null);
+        private static readonly bool[] WasDown = new bool[256];
 
         public static bool GetKeyDown(KeyCode key)
         {
-            if (GetKeyDownMethod == null)
+            int virtualKey = ToVirtualKey(key);
+            if (virtualKey <= 0)
             {
                 return false;
             }
 
-            return Convert.ToBoolean(GetKeyDownMethod.Invoke(null, new object[] { key }));
+            bool isDown = (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+            bool wasDown = WasDown[virtualKey];
+            WasDown[virtualKey] = isDown;
+            return isDown && !wasDown;
         }
+
+        private static int ToVirtualKey(KeyCode key)
+        {
+            switch (key)
+            {
+                case KeyCode.Backspace:
+                    return 0x08;
+                case KeyCode.Return:
+                    return 0x0D;
+                case KeyCode.Escape:
+                    return 0x1B;
+                case KeyCode.Space:
+                    return 0x20;
+                case KeyCode.LeftArrow:
+                    return 0x25;
+                case KeyCode.UpArrow:
+                    return 0x26;
+                case KeyCode.RightArrow:
+                    return 0x27;
+                case KeyCode.DownArrow:
+                    return 0x28;
+                case KeyCode.A:
+                    return 0x41;
+                case KeyCode.D:
+                    return 0x44;
+                default:
+                    return 0;
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
     }
 
     internal sealed class MajdataInputAdapter
