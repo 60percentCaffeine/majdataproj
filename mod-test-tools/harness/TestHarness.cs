@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,24 +27,31 @@ namespace ModTestHarness
 
         public async Task<HarnessRun> LaunchAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
         {
+            return await LaunchAsync(timeout, null, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task<HarnessRun> LaunchAsync(TimeSpan timeout, TestHookLaunchOptions options, CancellationToken cancellationToken = default)
+        {
             DateTimeOffset launchedAt = DateTimeOffset.UtcNow;
             await StopProcessesByNameAsync(RuntimeProcessNames, TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
             DeleteStaleArtifacts();
-
-            ProcessStartInfo start = new ProcessStartInfo();
-            start.FileName = "powershell.exe";
-            start.Arguments = "-NoProfile -Command \"Start-Process '.\\start-controller.bat'\"";
-            start.WorkingDirectory = GameRoot;
-            start.UseShellExecute = false;
-            using (Process launcher = Process.Start(start))
+            using (ConfigFileScope configScope = ApplyLaunchOptions(options))
             {
-                launcher.WaitForExit(10000);
-            }
+                ProcessStartInfo start = new ProcessStartInfo();
+                start.FileName = "powershell.exe";
+                start.Arguments = "-NoProfile -Command \"Start-Process '.\\start-controller.bat'\"";
+                start.WorkingDirectory = GameRoot;
+                start.UseShellExecute = false;
+                using (Process launcher = Process.Start(start))
+                {
+                    launcher.WaitForExit(10000);
+                }
 
-            BridgeReadyFile ready = await WaitForReadyFileAsync(launchedAt, timeout, cancellationToken).ConfigureAwait(false);
-            TestClient client = new TestClient(ready.Host, ready.Port);
-            await WaitForHealthAsync(client, timeout, cancellationToken).ConfigureAwait(false);
-            return new HarnessRun(this, ready, client);
+                BridgeReadyFile ready = await WaitForReadyFileAsync(launchedAt, timeout, cancellationToken).ConfigureAwait(false);
+                TestClient client = new TestClient(ready.Host, ready.Port);
+                await WaitForHealthAsync(client, timeout, cancellationToken).ConfigureAwait(false);
+                return new HarnessRun(this, ready, client);
+            }
         }
 
         public void CollectLogs(string artifactName)
@@ -123,6 +131,20 @@ namespace ModTestHarness
             DeleteFileWithRetry(ReadyPath, TimeSpan.FromSeconds(10));
             DeleteFileWithRetry(ReadyPath + ".tmp", TimeSpan.FromSeconds(10));
             Directory.CreateDirectory(ArtifactsRoot);
+        }
+
+        private ConfigFileScope ApplyLaunchOptions(TestHookLaunchOptions options)
+        {
+            if (options == null || !options.HasAnyBridgeOption)
+            {
+                return ConfigFileScope.Empty;
+            }
+
+            string configPath = Path.Combine(GameRoot, "UserData", "TestHookMod", "config.json");
+            ConfigFileScope scope = ConfigFileScope.Capture(configPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath));
+            File.WriteAllText(configPath, options.ToConfigJson());
+            return scope;
         }
 
         private static void DeleteFileWithRetry(string path, TimeSpan timeout)
@@ -271,6 +293,102 @@ namespace ModTestHarness
                         }
                     }
                 }
+            }
+        }
+    }
+
+    public sealed class TestHookLaunchOptions
+    {
+        public string BridgeHost { get; set; }
+        public int? BridgePort { get; set; }
+        public bool? ReplEnabled { get; set; }
+
+        internal bool HasAnyBridgeOption
+        {
+            get { return BridgeHost != null || BridgePort.HasValue || ReplEnabled.HasValue; }
+        }
+
+        internal string ToConfigJson()
+        {
+            StringBuilder builder = new StringBuilder();
+            builder.Append("{");
+            bool wrote = false;
+            if (BridgeHost != null)
+            {
+                AppendCommaIfNeeded(builder, ref wrote);
+                builder.Append("\"host\":\"");
+                builder.Append(Escape(BridgeHost));
+                builder.Append("\"");
+            }
+
+            if (BridgePort.HasValue)
+            {
+                AppendCommaIfNeeded(builder, ref wrote);
+                builder.Append("\"port\":");
+                builder.Append(BridgePort.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            if (ReplEnabled.HasValue)
+            {
+                AppendCommaIfNeeded(builder, ref wrote);
+                builder.Append("\"replEnabled\":");
+                builder.Append(ReplEnabled.Value ? "true" : "false");
+            }
+
+            builder.Append("}");
+            return builder.ToString();
+        }
+
+        private static void AppendCommaIfNeeded(StringBuilder builder, ref bool wrote)
+        {
+            if (wrote)
+            {
+                builder.Append(",");
+            }
+
+            wrote = true;
+        }
+
+        private static string Escape(string value)
+        {
+            return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+    }
+
+    internal sealed class ConfigFileScope : IDisposable
+    {
+        public static readonly ConfigFileScope Empty = new ConfigFileScope(null, false, null);
+
+        private readonly string _path;
+        private readonly bool _existed;
+        private readonly string _content;
+
+        private ConfigFileScope(string path, bool existed, string content)
+        {
+            _path = path;
+            _existed = existed;
+            _content = content;
+        }
+
+        public static ConfigFileScope Capture(string path)
+        {
+            return new ConfigFileScope(path, File.Exists(path), File.Exists(path) ? File.ReadAllText(path) : null);
+        }
+
+        public void Dispose()
+        {
+            if (_path == null)
+            {
+                return;
+            }
+
+            if (_existed)
+            {
+                File.WriteAllText(_path, _content);
+            }
+            else if (File.Exists(_path))
+            {
+                File.Delete(_path);
             }
         }
     }

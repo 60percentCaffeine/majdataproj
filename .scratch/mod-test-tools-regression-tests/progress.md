@@ -125,6 +125,28 @@
   - The first attempt assumed the scene name would stay constant between samples; the game naturally transitioned from `Init` to `Title`, so the final assertion allows normal boot scene transitions while still requiring loaded scene state and frame/time progression.
   - The selected invariant is intentionally broad: eval can safely inspect Unity scene roots/cameras and the game continues advancing afterward.
 
+## 2026-06-01 - Issue 07: test hook config and launch options regression
+
+- Added `TestHookLaunchOptions` and an overload `TestHarness.LaunchAsync(TimeSpan, TestHookLaunchOptions, CancellationToken)`.
+- The harness option path writes a temporary `UserData/TestHookMod/config.json` before starting MajdataPlay, waits for readiness/health, then restores the prior config file state before returning the `HarnessRun`.
+- Existing callers still use `LaunchAsync(TimeSpan, CancellationToken)` unchanged; it delegates to the new overload with no options.
+- Added `TestHookConfigRegressionTests.HarnessCanLaunchWithTemporaryConfigFileOverrideAndRestoreIt`.
+- The test launches with:
+  - `BridgeHost = "127.0.0.1"`;
+  - `BridgePort = 17444`;
+  - `ReplEnabled = false`.
+- Assertions verify:
+  - any pre-existing config file is restored, or the temporary config file is removed if none existed;
+  - readiness and `/health` both report host `127.0.0.1`, port `17444`, and `replEnabled:false`;
+  - no `ModTestReplClient` process is launched when REPL is disabled.
+- Cleanup restores config state again defensively, shuts down through the harness, and collects logs under `.scratch/mod-test-tools-artifacts/test-hook-config`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `TestHookConfigRegressionTests`: passed, 1/1, duration 4s.
+- Notes:
+  - The config compatibility path remains `UserData/TestHookMod/config.json`; the harness does not delete or move the containing directory.
+  - The temporary config is restored immediately after readiness because Test Hook Mod reads it during startup; keeping it around for the whole run is unnecessary and would make side effects easier to leak.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
