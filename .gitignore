@@ -17,6 +17,7 @@
 /sample-mod/tests/**/bin/
 /sample-mod/tests/**/obj/
 /sample-mod/artifacts/
+/ui-prototype-template-mod/bin/
 /mod-test-tools/test-hook-mod/bin/
 /mod-test-tools/test-hook-mod/obj/
 /mod-test-tools/test-hook-mod/packages/
