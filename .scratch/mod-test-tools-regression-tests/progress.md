@@ -83,6 +83,27 @@
   - The cycle check locks in the current `$id`/`$ref` behavior without caring about the concrete dictionary type name.
   - The limit checks use request-level `MaxDepth` and `MaxResponseBytes`, so they exercise the public eval contract rather than private serializer methods.
 
+## 2026-06-01 - Issue 05: eval error shape regression
+
+- Added `EvalErrorShapeRegressionTests.EvalReportsStructuredCompilationExecutionAndTimeoutErrors`.
+- Compilation failure scenario:
+  - sends invalid C# source `this is not valid csharp`;
+  - asserts HTTP 400, `ok:false`, `phase:"compilation"`, and a non-empty structured `errors` array.
+- Runtime exception scenario:
+  - returns `Task.FromException<object>(new InvalidOperationException("issue05 runtime boom"))`;
+  - asserts HTTP 500, `ok:false`, `phase:"execution"`, error type containing `InvalidOperationException`, and broad message evidence.
+- Timeout scenario:
+  - evaluates a snippet that sleeps for 2000 ms;
+  - request sets `TimeoutMs = 50`;
+  - asserts HTTP 408, `ok:false`, `phase:"execution"`, and error type containing `TimeoutException`.
+- The test shuts down through the harness and collects logs under `.scratch/mod-test-tools-artifacts/eval-error-shape`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `EvalErrorShapeRegressionTests`: passed, 1/1, duration 22s.
+- Notes:
+  - A synchronous `throw` inside the reflected snippet surfaced as `TargetInvocationException`, so the runtime-exception assertion uses a faulted `Task<object>` to exercise the hook's base-exception handling path.
+  - The assertions intentionally avoid exact compiler/runtime wording; they pin the stable envelope and broad error identity only.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
