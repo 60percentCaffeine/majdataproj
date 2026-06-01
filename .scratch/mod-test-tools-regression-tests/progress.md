@@ -147,6 +147,25 @@
   - The config compatibility path remains `UserData/TestHookMod/config.json`; the harness does not delete or move the containing directory.
   - The temporary config is restored immediately after readiness because Test Hook Mod reads it during startup; keeping it around for the whole run is unnecessary and would make side effects easier to leak.
 
+## 2026-06-01 - Issue 08: test hook shutdown regression
+
+- Added `TestHookShutdownRegressionTests.ShutdownEndpointReportsFallbackPidAndStopsRuntimeProcesses`.
+- The test launches the real game through the harness, then calls `/shutdown` directly through `TestClient.ShutdownAsync`.
+- The structured shutdown response assertions verify:
+  - HTTP 200;
+  - `ok:true`;
+  - `phase:"shutdown"`;
+  - `accepted:true`;
+  - `fallbackPid` equals the readiness file PID.
+- After the direct shutdown request, the test waits through `TestHarness.WaitForReadinessPidExitAsync`, applies the existing safe runtime-process cleanup path, and asserts no `MajdataPlay` or `ModTestReplClient` processes remain.
+- Cleanup only calls `HarnessRun.ShutdownOrKillAsync` if the direct shutdown request was not sent; otherwise it just disposes the client, stops runtime processes defensively, and collects logs under `.scratch/mod-test-tools-artifacts/test-hook-shutdown`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `TestHookShutdownRegressionTests`: passed, 1/1, duration 3s.
+- Notes:
+  - This test intentionally bypasses the harness convenience shutdown method for the main assertion so the `/shutdown` response contract is directly covered.
+  - The existing fallback process cleanup remains part of the test path, matching how the harness protects later runs from leaked Windows processes.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
