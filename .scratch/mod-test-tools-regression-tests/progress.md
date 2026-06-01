@@ -59,6 +59,30 @@
   - This locks in the current bounded serializer shape: enumerables use `items`, dictionaries use `entries`, and DTO-like objects expose public `properties`.
   - The assertions intentionally fail if array/dictionary/DTO values degrade to opaque strings.
 
+## 2026-06-01 - Issue 04: serialization limits and cycles regression
+
+- Added `SerializationLimitsAndCyclesRegressionTests.EvalSerializationHandlesCyclesAndReportsBoundedLimitFailures`.
+- Cycle scenario:
+  - eval creates a `Dictionary<string, object>` with `name = "cycle-root"` and `self` pointing back to the same dictionary;
+  - assertions verify the serialized root has a positive `$id`;
+  - assertions verify the `self` dictionary entry serializes as a `$ref` back to the root id.
+- Depth-limit scenario:
+  - eval returns `new { Inner = new { Value = 7 } }`;
+  - request sets `MaxDepth = 1`;
+  - assertions verify a structured failure with `ok:false` and `phase:"serialization"`.
+- Response-size scenario:
+  - eval returns `new string('x', 4096)`;
+  - request sets `MaxResponseBytes = 80`;
+  - assertions verify a structured failure with `ok:false` and `phase:"serialization"`.
+- The test does not assert exact exception text; it only requires a serialization-phase failure with an error object and type.
+- Cleanup shuts down through the harness and collects logs under `.scratch/mod-test-tools-artifacts/serialization-limits-cycles`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `SerializationLimitsAndCyclesRegressionTests`: passed, 1/1, duration 23s.
+- Notes:
+  - The cycle check locks in the current `$id`/`$ref` behavior without caring about the concrete dictionary type name.
+  - The limit checks use request-level `MaxDepth` and `MaxResponseBytes`, so they exercise the public eval contract rather than private serializer methods.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
