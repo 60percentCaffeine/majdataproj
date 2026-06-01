@@ -19,6 +19,24 @@
   - The test uses `JsonDocument` for both readiness and `/health`, so contract regressions fail on structured fields rather than brittle string-only checks.
   - The current full integration suite had already passed 13/13 before this issue was added; the next full run should include this as the 14th integration test.
 
+## 2026-06-01 - Issue 02: persistent eval session regression
+
+- Added `PersistentEvalSessionRegressionTests.EvalSessionStateIsPersistentIsolatedAndResettable`.
+- The test launches the real game through the harness and exercises the eval endpoints in order:
+  - creates `int issue02Value = 41;` through persistent `/eval`;
+  - verifies a later persistent `/eval` can read `issue02Value + 1 == 42`;
+  - verifies `/eval-isolated` cannot see the persistent variable and returns a structured `phase:"compilation"` failure;
+  - calls `/reset-session` and verifies it returns `phase:"reset"` with an advanced `sessionVersion`;
+  - verifies the persistent `/eval` session can no longer see `issue02Value` after reset.
+- Failure messages include the session transition being exercised, so regressions identify whether persistence, isolation, or reset behavior broke.
+- Cleanup calls `/reset-session` again best-effort, then shuts the game down through `HarnessRun.ShutdownOrKillAsync` and collects logs under `.scratch/mod-test-tools-artifacts/persistent-eval-session`.
+- Validation:
+  - `dotnet build .\mod-test-tools\integration\ModTest.Integration.Tests.csproj -c Release --nologo`: passed with 0 warnings and 0 errors.
+  - Filtered run for `PersistentEvalSessionRegressionTests`: passed, 1/1, duration 22s.
+- Notes:
+  - The persistent session model replays prior statements into later snippets, so a local variable declaration is sufficient to prove session replay.
+  - The expected isolated/reset failures are compilation-phase failures; the test intentionally checks phase and `ok:false`, not exact compiler diagnostic text.
+
 ## 2026-06-01 - Issue 15: audio system canary
 
 - Added `AudioSystemCanaryTests.BootedGameHasInitializedSaneAudioState`.
