@@ -1,6 +1,6 @@
 # Add Pure Prototype Core And State Tests
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -31,13 +31,21 @@ Confirmed
 
 ## Acceptance criteria
 
-- [ ] The prototype core can be built and tested without Unity or MajdataPlay runtime initialization.
-- [ ] Fake song data includes multiple categories, songs, difficulties, availability states, score/rank-like values, and special flags.
-- [ ] Song navigation updates the selected song according to the chosen wrap or clamp behavior.
-- [ ] OK from song selection moves to difficulty selection while preserving the selected song.
-- [ ] Back from difficulty selection returns to song selection with the selected song preserved.
-- [ ] Difficulty changes respect the valid/available difficulty range.
-- [ ] Unit tests cover the state machine's externally visible behavior.
+- [x] The prototype core can be built and tested without Unity or MajdataPlay runtime initialization.
+- [x] Fake song data includes multiple categories, songs, difficulties, availability states, score/rank-like values, and special flags.
+- [x] Song navigation updates the selected song according to the chosen wrap or clamp behavior.
+- [x] OK from song selection moves to difficulty selection while preserving the selected song.
+- [x] Back from difficulty selection returns to song selection with the selected song preserved.
+- [x] Difficulty changes respect the valid/available difficulty range.
+- [x] Unit tests cover the state machine's externally visible behavior.
+
+## Completion notes
+
+- Added `UiPrototypeTemplateMod.Core` with fake data, phases, semantic actions, selected song state, selected difficulty state, and state transitions.
+- Chose wrapping song navigation and clamped difficulty navigation that skips unavailable or locked difficulties.
+- Added 7 xUnit tests covering fake data shape, song wrapping, OK/Back routing, difficulty bounds, confirmed back behavior, and per-song difficulty preservation.
+- Updated the prototype mod build/install path to build and install `UiPrototypeTemplateMod.Core.dll`.
+- Verified a real MajdataPlay launch resolves the support DLL and logs `Prototype core ready: phase=SongSelect song=MAJTITLE difficulty=Basic`.
 
 ## Blocked by
 

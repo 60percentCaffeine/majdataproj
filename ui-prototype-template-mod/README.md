@@ -2,7 +2,7 @@
 
 Disposable MelonLoader mod for trying MajdataPlay UI ideas inside the real game window.
 
-This first slice only proves the template can build, install, activate, visually replace normal game content, and render a full-screen placeholder. The adapter keeps an IMGUI draw path and also installs a Unity UI canvas fallback because this patched MelonLoader v0.4.3 profile does not reliably invoke later MelonLoader lifecycle hooks during early startup.
+The template is split into a Unity-free prototype core and a thin MelonLoader adapter. The adapter keeps an IMGUI draw path and also installs a Unity UI canvas fallback because this patched MelonLoader v0.4.3 profile does not reliably invoke later MelonLoader lifecycle hooks during early startup.
 
 ## Build
 
@@ -16,7 +16,18 @@ Output:
 
 ```text
 ui-prototype-template-mod\bin\UiPrototypeTemplateMod.dll
+ui-prototype-template-mod\bin\UiPrototypeTemplateMod.Core.dll
 ```
+
+## Unit Tests
+
+From the project root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\user0-pc\majdataproj\ui-prototype-template-mod\test-unit.ps1"
+```
+
+The tests cover the Unity-free song-first prototype state machine and write results under `ui-prototype-template-mod\artifacts\unit`.
 
 ## Install
 
@@ -30,6 +41,7 @@ This patches the local MelonLoader v0.4.3 install using the same compatibility s
 
 ```text
 Majdata Hub\game\Mods\UiPrototypeTemplateMod.dll
+Majdata Hub\game\Mods\UiPrototypeTemplateModLib\UiPrototypeTemplateMod.Core.dll
 ```
 
 ## Run
@@ -45,6 +57,7 @@ Expected log lines in `Majdata Hub\game\MelonLoader\Latest.log`:
 ```text
 UI Prototype Template Mod v0.1.0
 [UI Prototype Template Mod] UI prototype takeover active - normal game UI is visually replaced.
+[UI Prototype Template Mod] Prototype core ready: phase=SongSelect song=MAJTITLE difficulty=Basic
 [UI Prototype Template Mod] UI prototype canvas placeholder installed.
 ```
 
@@ -56,6 +69,7 @@ Delete:
 
 ```text
 Majdata Hub\game\Mods\UiPrototypeTemplateMod.dll
+Majdata Hub\game\Mods\UiPrototypeTemplateModLib
 ```
 
 Then launch MajdataPlay normally. The prototype has no persistent settings or asset files.

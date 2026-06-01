@@ -1,4 +1,8 @@
+using System;
+using System.IO;
+using System.Reflection;
 using MelonLoader;
+using UiPrototypeTemplateMod.Core;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -21,9 +25,16 @@ namespace UiPrototypeTemplateMod
         private static GameObject _runtimeOverlayObject;
         private GameObject _overlayObject;
 
+        static PrototypeTemplateMod()
+        {
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveSupportAssembly;
+        }
+
         public override void OnApplicationStart()
         {
             MelonLogger.Msg(ActivationMessage);
+            PrototypeSession session = PrototypeSession.CreateDefault();
+            MelonLogger.Msg("Prototype core ready: phase=" + session.Phase + " song=" + session.SelectedSong.Title + " difficulty=" + session.SelectedDifficulty.Name);
             EnsureOverlayObject();
         }
 
@@ -80,7 +91,7 @@ namespace UiPrototypeTemplateMod
             }
 
             _overlayObject = new GameObject("UI Prototype Template Overlay");
-            Object.DontDestroyOnLoad(_overlayObject);
+            UnityEngine.Object.DontDestroyOnLoad(_overlayObject);
             _overlayObject.AddComponent<PrototypeOverlayBehaviour>();
             MelonLogger.Msg("UI prototype overlay behaviour installed.");
         }
@@ -94,7 +105,7 @@ namespace UiPrototypeTemplateMod
             }
 
             _runtimeOverlayObject = new GameObject("UI Prototype Template Runtime Overlay");
-            Object.DontDestroyOnLoad(_runtimeOverlayObject);
+            UnityEngine.Object.DontDestroyOnLoad(_runtimeOverlayObject);
             _runtimeOverlayObject.AddComponent<PrototypeOverlayBehaviour>();
             MelonLogger.Msg("UI prototype runtime overlay behaviour installed.");
         }
@@ -165,6 +176,23 @@ namespace UiPrototypeTemplateMod
                 };
             }
         }
+
+        private static Assembly ResolveSupportAssembly(object sender, ResolveEventArgs args)
+        {
+            AssemblyName name = new AssemblyName(args.Name);
+            if (name.Name != "UiPrototypeTemplateMod.Core")
+            {
+                return null;
+            }
+
+            string path = Path.Combine(Environment.CurrentDirectory, "Mods", "UiPrototypeTemplateModLib", "UiPrototypeTemplateMod.Core.dll");
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            return Assembly.LoadFrom(path);
+        }
     }
 
     public sealed class PrototypeOverlayBehaviour : MonoBehaviour
@@ -206,7 +234,7 @@ namespace UiPrototypeTemplateMod
             }
 
             _canvasObject = new GameObject("UI Prototype Template Canvas Placeholder");
-            Object.DontDestroyOnLoad(_canvasObject);
+            UnityEngine.Object.DontDestroyOnLoad(_canvasObject);
 
             Canvas canvas = _canvasObject.AddComponent<Canvas>();
             canvas.overrideSorting = true;

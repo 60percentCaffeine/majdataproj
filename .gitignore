@@ -18,6 +18,11 @@
 /sample-mod/tests/**/obj/
 /sample-mod/artifacts/
 /ui-prototype-template-mod/bin/
+/ui-prototype-template-mod/artifacts/
+/ui-prototype-template-mod/src/**/bin/
+/ui-prototype-template-mod/src/**/obj/
+/ui-prototype-template-mod/tests/**/bin/
+/ui-prototype-template-mod/tests/**/obj/
 /mod-test-tools/test-hook-mod/bin/
 /mod-test-tools/test-hook-mod/obj/
 /mod-test-tools/test-hook-mod/packages/
