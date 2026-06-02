@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.IO.Ports;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using MelonLoader;
 using UiPrototypeTemplateMod.Core;
@@ -17,19 +19,29 @@ namespace UiPrototypeTemplateMod
     public sealed class PrototypeTemplateMod : MelonMod
     {
         private const string ActivationMessage = "UI prototype takeover active - normal game UI is visually replaced.";
+        private const float VirtualCanvasWidth = 1080f;
+        private const float VirtualCanvasHeight = 1920f;
         private static readonly Color OverlayColor = new Color(0.02f, 0.02f, 0.025f, 0.98f);
         private static GUIStyle _titleStyle;
         private static GUIStyle _subtitleStyle;
         private static GUIStyle _bodyStyle;
         private static GUIStyle _overlayStyle;
+        private static GUIStyle _solidStyle;
         private static Texture2D _overlayTexture;
+        private static Texture2D _solidTexture;
+        private static Texture2D _circleFieldTexture;
+        private static Texture2D _selectedCoverTexture;
+        private static Texture2D _blueCoverTexture;
+        private static Texture2D _pinkCoverTexture;
+        private static Texture2D _darkCoverTexture;
+        private static Texture2D _levelBadgeTexture;
         private static bool _loggedFirstGui;
         private static GameObject _runtimeOverlayObject;
         private static string _diagnosticsLine = "Input: initializing";
         private static object _activeSession;
         private static int _variantIndex;
         private object _session;
-        private MajdataInputAdapter _majdataInput;
+        private PrototypeInputAdapter _inputAdapter;
         private GameObject _overlayObject;
         private SynchronizationContext _mainThreadContext;
         private Timer _tickTimer;
@@ -47,9 +59,9 @@ namespace UiPrototypeTemplateMod
             PrototypeSession session = PrototypeSession.CreateDefault();
             _session = session;
             _activeSession = session;
-            _majdataInput = MajdataInputAdapter.Create();
+            _inputAdapter = new PrototypeInputAdapter();
             _mainThreadContext = SynchronizationContext.Current;
-            _diagnosticsLine = "Input: " + (_majdataInput.IsAvailable ? PrototypeInputSource.MajdataReflection.ToString() : PrototypeInputSource.KeyboardFallback.ToString());
+            _diagnosticsLine = "Input: PrototypeOwned";
             MelonLogger.Msg("Prototype core ready: phase=" + session.Phase + " song=" + session.SelectedSong.Title + " difficulty=" + session.SelectedDifficulty.Name);
             MelonLogger.Msg("Prototype input source: " + _diagnosticsLine);
             EnsureOverlayObject();
@@ -61,7 +73,7 @@ namespace UiPrototypeTemplateMod
             EnsureOverlayObject();
             UpdateVariantFromKeyboard();
             UpdatePrototypeStateFromInput();
-            Time.timeScale = 0f;
+            Time.timeScale = 1f;
         }
 
         public override void OnGUI()
@@ -77,32 +89,47 @@ namespace UiPrototypeTemplateMod
                 _tickTimer = null;
             }
 
+            if (_inputAdapter != null)
+            {
+                _inputAdapter.Dispose();
+                _inputAdapter = null;
+            }
+
             Time.timeScale = 1f;
         }
 
         internal static void RenderOverlay()
         {
-            if (ActiveSession != null)
-            {
-                if (!_loggedFirstGui)
-                {
-                    MelonLogger.Msg("UI prototype IMGUI fallback skipped because song-first canvas is active.");
-                    _loggedFirstGui = true;
-                }
-
-                return;
-            }
-
             EnsureGuiResources();
 
             if (!_loggedFirstGui)
             {
-                MelonLogger.Msg("UI prototype initialization placeholder rendering through IMGUI.");
+                MelonLogger.Msg(ActiveSession == null
+                    ? "UI prototype initialization placeholder rendering through IMGUI."
+                    : "UI prototype song-first screen rendering through IMGUI.");
                 _loggedFirstGui = true;
             }
 
             Rect screen = new Rect(0f, 0f, Screen.width, Screen.height);
             GUI.Box(screen, GUIContent.none, _overlayStyle);
+            GUI.color = Color.white;
+            GUI.contentColor = Color.white;
+            GUI.backgroundColor = Color.white;
+
+            PrototypeSession activeSession = ActiveSession as PrototypeSession;
+            if (activeSession != null)
+            {
+                float portraitScale = Mathf.Min(Screen.width / VirtualCanvasWidth, Screen.height / VirtualCanvasHeight);
+                Matrix4x4 portraitPreviousMatrix = GUI.matrix;
+                GUI.matrix = Matrix4x4.TRS(
+                    new Vector3((Screen.width - VirtualCanvasWidth * portraitScale) * 0.5f, (Screen.height - VirtualCanvasHeight * portraitScale) * 0.5f, 0f),
+                    Quaternion.identity,
+                    new Vector3(portraitScale, portraitScale, 1f));
+
+                DrawSongFirstVirtualCanvas(activeSession);
+                GUI.matrix = portraitPreviousMatrix;
+                return;
+            }
 
             float scale = Mathf.Min(Screen.width / 1920f, Screen.height / 1080f);
             if (scale < 0.55f)
@@ -117,6 +144,7 @@ namespace UiPrototypeTemplateMod
                 new Vector3(scale, scale, 1f));
 
             DrawVirtualCanvas();
+
             GUI.matrix = previousMatrix;
         }
 
@@ -148,16 +176,8 @@ namespace UiPrototypeTemplateMod
                 return;
             }
 
-            RawPrototypeInput input;
-            if (_majdataInput != null && _majdataInput.TryRead(out input))
-            {
-                _diagnosticsLine = "Input: " + input.Source;
-            }
-            else
-            {
-                input = ReadKeyboardFallback();
-                _diagnosticsLine = "Input: " + input.Source;
-            }
+            RawPrototypeInput input = _inputAdapter != null ? _inputAdapter.Read() : ReadKeyboardFallback();
+            _diagnosticsLine = "Input: " + PrototypeInputAdapter.LastInputLabel;
 
             PrototypeInputFrame frame = PrototypeInputMapper.Map(session.Phase, input);
             if (!frame.HasActions)
@@ -170,7 +190,8 @@ namespace UiPrototypeTemplateMod
                 session.Apply(frame.Actions[i]);
             }
 
-            _diagnosticsLine = "Input: " + frame.Source + " Actions: " + JoinActions(frame);
+            _diagnosticsLine = "Input: " + PrototypeInputAdapter.LastInputLabel + " Actions: " + JoinActions(frame);
+            MelonLogger.Msg("Prototype input actions: " + _diagnosticsLine);
             PrototypeOverlayBehaviour.RefreshAll();
         }
 
@@ -202,7 +223,7 @@ namespace UiPrototypeTemplateMod
                 EnsureOverlayObject();
                 UpdateVariantFromKeyboard();
                 UpdatePrototypeStateFromInput();
-                Time.timeScale = 0f;
+                Time.timeScale = 1f;
                 if (!_loggedTimerTick)
                 {
                     MelonLogger.Msg("Prototype input timer reached Unity main thread.");
@@ -219,10 +240,10 @@ namespace UiPrototypeTemplateMod
         {
             return new RawPrototypeInput(
                 PrototypeInputSource.KeyboardFallback,
-                KeyboardInput.GetKeyDown(KeyCode.DownArrow) || KeyboardInput.GetKeyDown(KeyCode.D),
-                KeyboardInput.GetKeyDown(KeyCode.Return) || KeyboardInput.GetKeyDown(KeyCode.Space),
-                KeyboardInput.GetKeyDown(KeyCode.Escape) || KeyboardInput.GetKeyDown(KeyCode.Backspace),
-                KeyboardInput.GetKeyDown(KeyCode.UpArrow) || KeyboardInput.GetKeyDown(KeyCode.A));
+                KeyboardInput.GetKeyDown(KeyCode.D),
+                KeyboardInput.GetKeyDown(KeyCode.C) || KeyboardInput.GetKeyDown(KeyCode.Return) || KeyboardInput.GetKeyDown(KeyCode.Space),
+                KeyboardInput.GetKeyDown(KeyCode.X) || KeyboardInput.GetKeyDown(KeyCode.Escape) || KeyboardInput.GetKeyDown(KeyCode.Backspace),
+                KeyboardInput.GetKeyDown(KeyCode.Z));
         }
 
         private static void UpdateVariantFromKeyboard()
@@ -308,6 +329,365 @@ namespace UiPrototypeTemplateMod
             GUI.Label(new Rect(104f, 980f, 1712f, 48f), new GUIContent(DiagnosticsLine), _subtitleStyle);
         }
 
+        private static void DrawSongFirstVirtualCanvas(PrototypeSession session)
+        {
+            PrototypeSong song = session.SelectedSong;
+            PrototypeDifficulty difficulty = session.SelectedDifficulty;
+
+            DrawBaseGameShell();
+            Color baseText = new Color(0.34f, 0.28f, 0.24f, 1f);
+            DrawText(new Rect(34f, 114f, 1010f, 30f), "Press Select P1 to search and sort songs. Long press Button 4 to start practice mode. Press Alt+F4 to exit.", 19, true, baseText, TextAnchor.MiddleLeft);
+            DrawText(new Rect(34f, 158f, 990f, 28f), VariantLabel + "    " + session.Phase + "    Song: " + song.Title + "    Difficulty: " + difficulty.Name + " " + difficulty.Level, 18, true, baseText, TextAnchor.MiddleLeft);
+            DrawWaveformPanel(song);
+
+            if (VariantIndex == 0)
+            {
+                DrawVariantOne(session);
+            }
+            else if (VariantIndex == 1)
+            {
+                DrawVariantTwo(session);
+            }
+            else
+            {
+                DrawVariantThree(session);
+            }
+
+            DrawPromptsImgui(session.Phase);
+            DrawText(new Rect(24f, 830f, 1032f, 28f), DiagnosticsLine + "    Left/Right switches variants", 18, true, Color.white, TextAnchor.MiddleCenter);
+        }
+
+        private static void DrawBaseGameShell()
+        {
+            DrawPanel(new Rect(0f, 0f, VirtualCanvasWidth, 450f), new Color(1f, 0.985f, 0.95f, 1f));
+            DrawPanel(new Rect(0f, 450f, VirtualCanvasWidth, 430f), Color.black);
+            DrawPanel(new Rect(0f, 880f, VirtualCanvasWidth, 1040f), new Color(1f, 0.985f, 0.95f, 1f));
+            DrawPlaid(new Rect(0f, 0f, VirtualCanvasWidth, 450f));
+            DrawPlaid(new Rect(0f, 880f, VirtualCanvasWidth, 1040f));
+
+            DrawPanel(new Rect(24f, 18f, 420f, 92f), new Color(0.34f, 0.28f, 0.24f, 0.96f));
+            DrawCircle(new Rect(42f, 26f, 76f, 76f), _blueCoverTexture);
+            DrawText(new Rect(132f, 38f, 300f, 48f), "Guest", 28, true, Color.white, TextAnchor.MiddleLeft);
+
+            DrawCircle(new Rect(-6f, 836f, 1092f, 1092f), _circleFieldTexture);
+            DrawTab(new Rect(266f, 872f, 206f, 58f), "Lv -");
+            DrawTab(new Rect(652f, 872f, 206f, 58f), "Lv +");
+            DrawTab(new Rect(16f, 1162f, 70f, 136f), "<");
+            DrawTab(new Rect(994f, 1162f, 70f, 136f), ">");
+            DrawTab(new Rect(266f, 1842f, 206f, 58f), "Back");
+            DrawTab(new Rect(652f, 1842f, 206f, 58f), "OK");
+        }
+
+        private static void DrawPlaid(Rect area)
+        {
+            Color oldColor = GUI.color;
+            GUI.color = new Color(0.95f, 0.75f, 0.56f, 0.22f);
+            for (float x = area.x - area.height; x < area.xMax + area.height; x += 86f)
+            {
+                DrawPanel(new Rect(x, area.y, 10f, area.height), GUI.color);
+            }
+
+            GUI.color = new Color(0.95f, 0.75f, 0.56f, 0.14f);
+            for (float y = area.y; y < area.yMax; y += 86f)
+            {
+                DrawPanel(new Rect(area.x, y, area.width, 7f), GUI.color);
+            }
+
+            GUI.color = oldColor;
+        }
+
+        private static void DrawWaveformPanel(PrototypeSong song)
+        {
+            Rect panel = new Rect(24f, 202f, 1032f, 214f);
+            DrawPanel(panel, new Color(0.34f, 0.28f, 0.24f, 0.96f));
+            DrawText(new Rect(42f, 226f, 260f, 118f), "Peak Density = 15\nEsti. Lv " + song.Difficulties[sessionSafeDifficultyIndex(song)].Level + "\nLength = 2:38.516\nBPM = " + song.Bpm, 22, false, Color.white, TextAnchor.UpperLeft);
+
+            Color[] colors = new[]
+            {
+                new Color(0.72f, 0.36f, 0.56f, 0.95f),
+                new Color(0.42f, 0.58f, 0.72f, 0.9f),
+                new Color(0.74f, 0.68f, 0.38f, 0.8f)
+            };
+
+            for (int i = 0; i < 70; i++)
+            {
+                float x = 258f + i * 10f;
+                float h = 22f + Mathf.Abs(Mathf.Sin((i + song.Title.Length) * 0.71f)) * 138f;
+                Color oldColor = GUI.color;
+                GUI.color = colors[i % colors.Length];
+                DrawPanel(new Rect(x, panel.yMax - 24f - h, 10f, h), GUI.color);
+                GUI.color = oldColor;
+            }
+        }
+
+        private static int sessionSafeDifficultyIndex(PrototypeSong song)
+        {
+            return song.Difficulties.Count > 2 ? 2 : 0;
+        }
+
+        private static void DrawScreenSpaceSongFirst(PrototypeSession session)
+        {
+            float width = Screen.width;
+            float height = Screen.height;
+            float margin = Mathf.Max(14f, width * 0.03f);
+            float y = margin;
+            PrototypeSong song = session.SelectedSong;
+            PrototypeDifficulty difficulty = session.SelectedDifficulty;
+
+            BoxText(new Rect(margin, y, width - margin * 2f, 82f), VariantLabel + "\nSONG-FIRST SELECTION PROTOTYPE", 28, true);
+            y += 96f;
+            BoxText(new Rect(margin, y, width - margin * 2f, 58f), "Phase: " + session.Phase + "  |  Song: " + song.Title + "  |  Difficulty: " + difficulty.Name + " " + difficulty.Level, 17, false);
+            y += 72f;
+
+            int count = session.Songs.Count;
+            int previous = session.SelectedSongIndex == 0 ? count - 1 : session.SelectedSongIndex - 1;
+            int next = session.SelectedSongIndex == count - 1 ? 0 : session.SelectedSongIndex + 1;
+            float third = (width - margin * 2f - 16f) / 3f;
+            BoxText(new Rect(margin, y, third, 88f), "Previous\n" + session.Songs[previous].Title, 15, false);
+            BoxText(new Rect(margin + third + 8f, y, third, 88f), "SELECTED SONG\n" + song.Title + "\n" + song.Category, 17, true);
+            BoxText(new Rect(margin + third * 2f + 16f, y, third, 88f), "Next\n" + session.Songs[next].Title, 15, false);
+            y += 104f;
+
+            BoxText(new Rect(margin, y, width - margin * 2f, 122f), "Song details\n" + song.Title + " / " + song.Artist + "\nBPM " + song.Bpm + "  " + song.Category + "  " + song.Badge + FlagText(song) + "\nRanks and DX-score-like values stay visible before choosing difficulty.", 16, false);
+            y += 138f;
+
+            string phaseTitle;
+            string phaseBody;
+            if (session.Phase == PrototypePhase.SongSelect)
+            {
+                phaseTitle = "BROWSE SONGS";
+                phaseBody = "A3/A6 browse songs. A4 locks the song and moves to difficulty selection. Difficulty is secondary context here.";
+            }
+            else if (session.Phase == PrototypePhase.DifficultySelect)
+            {
+                phaseTitle = "DIFFICULTY SELECT";
+                phaseBody = "Selected song remains visible. A3/A6 now change difficulty. A5 returns to the same song.";
+            }
+            else
+            {
+                phaseTitle = "CONFIRMED";
+                phaseBody = "A5 returns to difficulty selection.";
+            }
+
+            BoxText(new Rect(margin, y, width - margin * 2f, 116f), phaseTitle + "\n" + phaseBody, 17, true);
+            y += 132f;
+
+            for (int i = 0; i < song.Difficulties.Count; i++)
+            {
+                PrototypeDifficulty diff = song.Difficulties[i];
+                bool selected = i == session.SelectedDifficultyIndex;
+                string status = diff.CanSelect ? diff.Rank + "  " + diff.DxScore : diff.Locked ? "LOCKED" : "UNAVAILABLE";
+                BoxText(new Rect(margin, y, width - margin * 2f, 58f), (selected ? "> " : "  ") + diff.Name + " " + diff.Level + "    " + status, selected ? 17 : 15, selected);
+                y += 66f;
+            }
+
+            string prompts = session.Phase == PrototypePhase.SongSelect
+                ? "A3 Next Song    A6 Previous Song    A4 OK    A5 Category/Back"
+                : session.Phase == PrototypePhase.DifficultySelect
+                    ? "A3 Harder    A6 Easier    A4 Confirm    A5 Back to Songs"
+                    : "A5 Back to Difficulty";
+
+            BoxText(new Rect(margin, height - 116f, width - margin * 2f, 52f), prompts, 15, true);
+            BoxText(new Rect(margin, height - 58f, width - margin * 2f, 40f), DiagnosticsLine + "    Left/Right switches variants", 13, false);
+        }
+
+        private static void BoxText(Rect rect, string text, int fontSize, bool bold)
+        {
+            GUIStyle style = GUI.skin.box;
+            style.alignment = TextAnchor.MiddleCenter;
+            style.fontSize = fontSize;
+            style.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+            style.wordWrap = true;
+            style.normal.textColor = Color.white;
+            GUI.Box(rect, new GUIContent(text), style);
+        }
+
+        private static void DrawVariantOne(PrototypeSession session)
+        {
+            DrawText(new Rect(48f, 936f, 984f, 32f), "Sinmai-like song-first carousel", 22, true, new Color(0.36f, 0.31f, 0.28f, 1f), TextAnchor.MiddleCenter);
+            DrawCarouselImgui(session);
+            DrawSongDetailsImgui(session.SelectedSong, new Rect(688f, 1078f, 314f, 474f));
+            DrawDifficultiesImgui(session, 210f, 1558f);
+        }
+
+        private static void DrawVariantTwo(PrototypeSession session)
+        {
+            DrawText(new Rect(48f, 936f, 984f, 32f), "Majdata-native hybrid list", 22, true, new Color(0.36f, 0.31f, 0.28f, 1f), TextAnchor.MiddleCenter);
+            DrawPanel(new Rect(76f, 1054f, 280f, 486f), new Color(0.34f, 0.28f, 0.24f, 0.92f));
+            for (int i = 0; i < session.Songs.Count; i++)
+            {
+                PrototypeSong row = session.Songs[i];
+                bool selected = i == session.SelectedSongIndex;
+                Rect rowRect = new Rect(102f, 1084f + i * 74f, 228f, 56f);
+                DrawPanel(rowRect, selected ? new Color(1f, 0.39f, 0.30f, 0.98f) : new Color(0.45f, 0.39f, 0.35f, 0.92f));
+                DrawText(rowRect, row.Title + "\n" + row.Category, selected ? 17 : 15, selected, Color.white, TextAnchor.MiddleCenter);
+            }
+
+            DrawSelectedCover(session, new Rect(374f, 1168f, 356f, 356f), true);
+            DrawSongDetailsImgui(session.SelectedSong, new Rect(720f, 1078f, 282f, 474f));
+            DrawPhasePanelImgui(session, new Rect(374f, 1558f, 628f, 160f));
+            DrawDifficultiesImgui(session, 178f, 1742f);
+        }
+
+        private static void DrawVariantThree(PrototypeSession session)
+        {
+            DrawText(new Rect(48f, 936f, 984f, 32f), "Compact fast-flow hybrid", 22, true, new Color(0.36f, 0.31f, 0.28f, 1f), TextAnchor.MiddleCenter);
+            DrawPanel(new Rect(98f, 1096f, 884f, 360f), new Color(0.34f, 0.28f, 0.24f, 0.96f));
+            DrawSelectedCover(session, new Rect(128f, 1130f, 312f, 312f), true);
+            DrawText(new Rect(472f, 1132f, 444f, 72f), session.SelectedSong.Title, 34, true, Color.white, TextAnchor.MiddleLeft);
+            DrawText(new Rect(472f, 1208f, 444f, 74f), session.SelectedSong.Artist + "\n" + session.SelectedSong.Category + " / BPM " + session.SelectedSong.Bpm + FlagText(session.SelectedSong), 22, false, Color.white, TextAnchor.MiddleLeft);
+            string phase = session.Phase == PrototypePhase.SongSelect ? "Pick song first" : session.Phase == PrototypePhase.DifficultySelect ? "Now choose difficulty" : "Confirmed";
+            DrawText(new Rect(472f, 1300f, 444f, 54f), phase, 28, true, new Color(1f, 0.78f, 0.36f, 1f), TextAnchor.MiddleLeft);
+            DrawText(new Rect(472f, 1356f, 444f, 66f), session.SelectedDifficulty.Name + " " + session.SelectedDifficulty.Level + "    " + session.SelectedDifficulty.Rank + " " + session.SelectedDifficulty.DxScore, 24, true, Color.white, TextAnchor.MiddleLeft);
+            DrawDifficultiesImgui(session, 178f, 1508f);
+        }
+
+        private static void DrawCarouselImgui(PrototypeSession session)
+        {
+            int count = session.Songs.Count;
+            int previous = session.SelectedSongIndex == 0 ? count - 1 : session.SelectedSongIndex - 1;
+            int next = session.SelectedSongIndex == count - 1 ? 0 : session.SelectedSongIndex + 1;
+
+            DrawCover(new Rect(184f, 1118f, 148f, 148f), session.Songs[previous].Title, session.Songs[previous].Difficulties[0].Level, _blueCoverTexture);
+            DrawCover(new Rect(358f, 1016f, 144f, 144f), session.Songs[previous].Title, session.Songs[previous].Difficulties[1].Level, _darkCoverTexture);
+            DrawCover(new Rect(544f, 1018f, 144f, 144f), session.Songs[next].Title, session.Songs[next].Difficulties[1].Level, _pinkCoverTexture);
+            DrawCover(new Rect(706f, 1138f, 140f, 140f), session.Songs[next].Title, "?", _blueCoverTexture);
+            DrawCover(new Rect(212f, 1506f, 142f, 142f), session.Songs[previous].Title, session.Songs[previous].Difficulties[2].Level, _pinkCoverTexture);
+            DrawCover(new Rect(392f, 1648f, 142f, 142f), session.Songs[next].Title, "10", _darkCoverTexture);
+            DrawCover(new Rect(586f, 1644f, 142f, 142f), "Random", "9+", _blueCoverTexture);
+            DrawSelectedCover(session, new Rect(332f, 1218f, 350f, 350f), true);
+        }
+
+        private static void DrawSongDetailsImgui(PrototypeSong song, Rect rect)
+        {
+            DrawPanel(rect, new Color(0.34f, 0.28f, 0.24f, 0.97f));
+            DrawText(new Rect(rect.x + 28f, rect.y + 84f, rect.width - 42f, 66f), song.Title, 25, true, Color.white, TextAnchor.MiddleLeft);
+            DrawText(new Rect(rect.x + 28f, rect.y + 150f, rect.width - 42f, 84f), song.Artist + "\n" + song.Category + "    BPM " + song.Bpm + FlagText(song), 20, true, Color.white, TextAnchor.MiddleLeft);
+            DrawPanel(new Rect(rect.x + 28f, rect.y + 274f, rect.width - 56f, 3f), Color.white);
+            DrawText(new Rect(rect.x + 28f, rect.y + 302f, rect.width - 56f, 92f), "Score facts stay visible while songs are browsed first.", 18, false, Color.white, TextAnchor.MiddleLeft);
+        }
+
+        private static void DrawDifficultiesImgui(PrototypeSession session, float startX, float y)
+        {
+            PrototypeSong song = session.SelectedSong;
+            for (int i = 0; i < song.Difficulties.Count; i++)
+            {
+                PrototypeDifficulty diff = song.Difficulties[i];
+                bool selected = i == session.SelectedDifficultyIndex;
+                Rect rect = new Rect(startX + i * 138f, y, 118f, 86f);
+                DrawPanel(rect, selected ? new Color(1f, 0.39f, 0.30f, 0.98f) : diff.CanSelect ? new Color(0.34f, 0.28f, 0.24f, 0.95f) : new Color(0.25f, 0.25f, 0.25f, 0.72f));
+                DrawText(new Rect(rect.x + 8f, rect.y + 8f, rect.width - 16f, 32f), diff.Name + " " + diff.Level, 16, true, Color.white, TextAnchor.MiddleCenter);
+                DrawText(new Rect(rect.x + 8f, rect.y + 42f, rect.width - 16f, 32f), diff.CanSelect ? diff.Rank : diff.Locked ? "LOCKED" : "N/A", 15, true, Color.white, TextAnchor.MiddleCenter);
+            }
+        }
+
+        private static void DrawPhasePanelImgui(PrototypeSession session, Rect rect)
+        {
+            string title;
+            string body;
+            if (session.Phase == PrototypePhase.SongSelect)
+            {
+                title = "BROWSE SONGS";
+                body = "A3/A6 move through songs. Difficulty is context only until OK.";
+            }
+            else if (session.Phase == PrototypePhase.DifficultySelect)
+            {
+                title = "DIFFICULTY SELECT";
+                body = "Selected song remains fixed. A3/A6 now change difficulty.";
+            }
+            else
+            {
+                title = "CONFIRMED";
+                body = "Back returns to difficulty selection.";
+            }
+
+            DrawPanel(rect, new Color(0.34f, 0.28f, 0.24f, 0.96f));
+            DrawText(new Rect(rect.x + 24f, rect.y + 20f, rect.width - 48f, 46f), title, 24, true, new Color(1f, 0.78f, 0.36f, 1f), TextAnchor.MiddleCenter);
+            DrawText(new Rect(rect.x + 28f, rect.y + 74f, rect.width - 56f, rect.height - 88f), body, 18, false, Color.white, TextAnchor.MiddleCenter);
+        }
+
+        private static void DrawPromptsImgui(PrototypePhase phase)
+        {
+            string prompts = phase == PrototypePhase.SongSelect
+                ? "A3 Next Song    A6 Previous Song    A4 OK    A5 Category/Back"
+                : phase == PrototypePhase.DifficultySelect
+                    ? "A3 Harder    A6 Easier    A4 Confirm    A5 Back to Songs"
+                    : "A5 Back to Difficulty";
+
+            DrawPanel(new Rect(86f, 1764f, 892f, 56f), new Color(0.34f, 0.28f, 0.24f, 0.96f));
+            DrawText(new Rect(106f, 1772f, 852f, 40f), prompts, 20, true, Color.white, TextAnchor.MiddleCenter);
+        }
+
+        private static string FlagText(PrototypeSong song)
+        {
+            string flags = string.Empty;
+            if (song.IsLong)
+            {
+                flags += "    LONG";
+            }
+
+            if (song.IsSpecial)
+            {
+                flags += "    SPECIAL";
+            }
+
+            return flags;
+        }
+
+        private static void DrawSelectedCover(PrototypeSession session, Rect rect, bool showBadge)
+        {
+            DrawCircle(new Rect(rect.x - 16f, rect.y - 16f, rect.width + 32f, rect.height + 32f), _levelBadgeTexture);
+            DrawCircle(rect, _selectedCoverTexture);
+            DrawText(new Rect(rect.x + 28f, rect.y + rect.height * 0.42f, rect.width - 56f, 58f), session.SelectedSong.Title, 28, true, new Color(0.34f, 0.28f, 0.24f, 1f), TextAnchor.MiddleCenter);
+
+            if (showBadge)
+            {
+                Rect badge = new Rect(rect.x - 20f, rect.y + rect.height * 0.66f, 96f, 96f);
+                DrawCircle(badge, _levelBadgeTexture);
+                DrawText(badge, session.SelectedDifficulty.Level, 28, true, Color.white, TextAnchor.MiddleCenter);
+            }
+        }
+
+        private static void DrawCover(Rect rect, string title, string level, Texture2D texture)
+        {
+            DrawCircle(rect, texture);
+            DrawText(new Rect(rect.x + 10f, rect.y + 36f, rect.width - 20f, 42f), title, 15, true, Color.white, TextAnchor.MiddleCenter);
+            DrawPanel(new Rect(rect.x + 22f, rect.yMax - 28f, rect.width - 44f, 24f), new Color(0f, 0f, 0f, 0.86f));
+            DrawText(new Rect(rect.x + 22f, rect.yMax - 29f, rect.width - 44f, 24f), level, 16, true, Color.white, TextAnchor.MiddleCenter);
+        }
+
+        private static void DrawTab(Rect rect, string text)
+        {
+            DrawPanel(rect, new Color(1f, 1f, 1f, 0.96f));
+            DrawText(rect, text, 24, true, new Color(0.34f, 0.28f, 0.24f, 1f), TextAnchor.MiddleCenter);
+        }
+
+        private static void DrawCircle(Rect rect, Texture2D texture)
+        {
+            GUIStyle style = new GUIStyle();
+            style.normal.background = texture;
+            GUI.Box(rect, GUIContent.none, style);
+        }
+
+        private static void DrawPanel(Rect rect, Color color)
+        {
+            Color oldColor = GUI.color;
+            GUI.color = color;
+            GUI.Box(rect, GUIContent.none, _solidStyle);
+            GUI.color = oldColor;
+        }
+
+        private static void DrawText(Rect rect, string text, int fontSize, bool bold, Color color, TextAnchor alignment)
+        {
+            GUIStyle style = bold ? _titleStyle : _bodyStyle;
+            style.alignment = alignment;
+            style.fontSize = fontSize;
+            style.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+            style.wordWrap = true;
+            style.normal.textColor = color;
+            GUI.Label(rect, new GUIContent(text), style);
+        }
+
         private static void EnsureGuiResources()
         {
             if (_overlayTexture == null)
@@ -317,10 +697,33 @@ namespace UiPrototypeTemplateMod
                 _overlayTexture.Apply();
             }
 
+            if (_solidTexture == null)
+            {
+                _solidTexture = new Texture2D(1, 1);
+                _solidTexture.SetPixel(0, 0, Color.white);
+                _solidTexture.Apply();
+            }
+
+            if (_circleFieldTexture == null)
+            {
+                _circleFieldTexture = CreateCircleTexture(1024, new Color(1f, 0.985f, 0.95f, 0.98f), new Color(0.34f, 0.28f, 0.24f, 1f), 40);
+                _selectedCoverTexture = CreateCircleTexture(512, new Color(0.74f, 0.93f, 0.96f, 1f), new Color(1f, 0.39f, 0.30f, 1f), 32);
+                _blueCoverTexture = CreateCircleTexture(256, new Color(0.42f, 0.7f, 0.86f, 1f), new Color(0.28f, 0.24f, 0.22f, 1f), 10);
+                _pinkCoverTexture = CreateCircleTexture(256, new Color(0.88f, 0.52f, 0.66f, 1f), new Color(0.28f, 0.24f, 0.22f, 1f), 10);
+                _darkCoverTexture = CreateCircleTexture(256, new Color(0.12f, 0.12f, 0.14f, 1f), new Color(0.28f, 0.24f, 0.22f, 1f), 10);
+                _levelBadgeTexture = CreateCircleTexture(128, new Color(1f, 0.39f, 0.30f, 1f), new Color(1f, 0.39f, 0.30f, 1f), 4);
+            }
+
             if (_overlayStyle == null)
             {
                 _overlayStyle = new GUIStyle();
                 _overlayStyle.normal.background = _overlayTexture;
+            }
+
+            if (_solidStyle == null)
+            {
+                _solidStyle = new GUIStyle();
+                _solidStyle.normal.background = _solidTexture;
             }
 
             if (_titleStyle == null)
@@ -354,6 +757,40 @@ namespace UiPrototypeTemplateMod
                     normal = { textColor = Color.white }
                 };
             }
+        }
+
+        private static Texture2D CreateCircleTexture(int size, Color fill, Color border, int borderWidth)
+        {
+            Texture2D texture = new Texture2D(size, size);
+            float center = (size - 1) * 0.5f;
+            float outerRadius = center;
+            float innerRadius = outerRadius - borderWidth;
+            Color clear = new Color(0f, 0f, 0f, 0f);
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x - center;
+                    float dy = y - center;
+                    float distance = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (distance > outerRadius)
+                    {
+                        texture.SetPixel(x, y, clear);
+                    }
+                    else if (distance >= innerRadius)
+                    {
+                        texture.SetPixel(x, y, border);
+                    }
+                    else
+                    {
+                        texture.SetPixel(x, y, fill);
+                    }
+                }
+            }
+
+            texture.Apply();
+            return texture;
         }
 
         private static Assembly ResolveSupportAssembly(object sender, ResolveEventArgs args)
@@ -414,8 +851,14 @@ namespace UiPrototypeTemplateMod
                     return 0x28;
                 case KeyCode.A:
                     return 0x41;
+                case KeyCode.C:
+                    return 0x43;
                 case KeyCode.D:
                     return 0x44;
+                case KeyCode.X:
+                    return 0x58;
+                case KeyCode.Z:
+                    return 0x5A;
                 default:
                     return 0;
             }
@@ -425,134 +868,302 @@ namespace UiPrototypeTemplateMod
         private static extern short GetAsyncKeyState(int virtualKey);
     }
 
-    internal sealed class MajdataInputAdapter
+    internal sealed class PrototypeInputAdapter : IDisposable
     {
-        private const BindingFlags StaticPublic = BindingFlags.Public | BindingFlags.Static;
-        private readonly MethodInfo _getButtonDown;
-        private readonly MethodInfo _getInputDown;
-        private readonly object _a3Button;
-        private readonly object _a4Button;
-        private readonly object _a5Button;
-        private readonly object _a6Button;
-        private readonly object _a3Sensor;
-        private readonly object _a4Sensor;
-        private readonly object _a5Sensor;
-        private readonly object _a6Sensor;
+        private const int SensorA3 = 2;
+        private const int SensorA4 = 3;
+        private const int SensorA5 = 4;
+        private const int SensorA6 = 5;
+        private readonly object _lock = new object();
+        private readonly bool[] _sensorStates = new bool[35];
+        private readonly bool[] _latchedEdges = new bool[4];
+        private readonly string _portName;
+        private readonly int _baudRate;
+        private Thread _thread;
+        private volatile bool _running;
+        private string _status;
 
-        private MajdataInputAdapter(
-            MethodInfo getButtonDown,
-            MethodInfo getInputDown,
-            object a3Button,
-            object a4Button,
-            object a5Button,
-            object a6Button,
-            object a3Sensor,
-            object a4Sensor,
-            object a5Sensor,
-            object a6Sensor)
+        public static string LastInputLabel = "COM initializing";
+
+        public PrototypeInputAdapter()
         {
-            _getButtonDown = getButtonDown;
-            _getInputDown = getInputDown;
-            _a3Button = a3Button;
-            _a4Button = a4Button;
-            _a5Button = a5Button;
-            _a6Button = a6Button;
-            _a3Sensor = a3Sensor;
-            _a4Sensor = a4Sensor;
-            _a5Sensor = a5Sensor;
-            _a6Sensor = a6Sensor;
+            _portName = ResolveTouchPanelPortName();
+            _baudRate = ResolveTouchPanelBaudRate();
+            _status = "COM " + _portName + " opening";
+            LastInputLabel = _status;
+            _running = true;
+            _thread = new Thread(SerialThreadMain);
+            _thread.IsBackground = true;
+            _thread.Name = "UI Prototype COM Input";
+            _thread.Start();
         }
 
-        public bool IsAvailable
+        public RawPrototypeInput Read()
         {
-            get { return _getButtonDown != null || _getInputDown != null; }
+            bool serialA3;
+            bool serialA4;
+            bool serialA5;
+            bool serialA6;
+            lock (_lock)
+            {
+                serialA3 = _latchedEdges[0];
+                serialA4 = _latchedEdges[1];
+                serialA5 = _latchedEdges[2];
+                serialA6 = _latchedEdges[3];
+                for (int i = 0; i < _latchedEdges.Length; i++)
+                {
+                    _latchedEdges[i] = false;
+                }
+            }
+
+            RawPrototypeInput keyboard = new RawPrototypeInput(
+                PrototypeInputSource.KeyboardFallback,
+                KeyboardInput.GetKeyDown(KeyCode.D),
+                KeyboardInput.GetKeyDown(KeyCode.C) || KeyboardInput.GetKeyDown(KeyCode.Return) || KeyboardInput.GetKeyDown(KeyCode.Space),
+                KeyboardInput.GetKeyDown(KeyCode.X) || KeyboardInput.GetKeyDown(KeyCode.Escape) || KeyboardInput.GetKeyDown(KeyCode.Backspace),
+                KeyboardInput.GetKeyDown(KeyCode.Z));
+
+            bool hasSerial = serialA3 || serialA4 || serialA5 || serialA6;
+            bool hasKeyboard = keyboard.A3 || keyboard.A4 || keyboard.A5 || keyboard.A6;
+            LastInputLabel = hasSerial
+                ? _status + " edge"
+                : hasKeyboard
+                    ? "Keyboard fallback"
+                    : _status;
+
+            return new RawPrototypeInput(
+                hasSerial ? PrototypeInputSource.MajdataReflection : PrototypeInputSource.KeyboardFallback,
+                serialA3 || keyboard.A3,
+                serialA4 || keyboard.A4,
+                serialA5 || keyboard.A5,
+                serialA6 || keyboard.A6);
         }
 
-        public static MajdataInputAdapter Create()
+        public void Dispose()
+        {
+            _running = false;
+        }
+
+        private void SerialThreadMain()
+        {
+            while (_running)
+            {
+                try
+                {
+                    using (SerialPort serial = new SerialPort(_portName, _baudRate))
+                    {
+                        serial.ReadTimeout = 500;
+                        serial.WriteTimeout = 500;
+                        serial.Open();
+                        InitializeTouchPanel(serial);
+                        _status = "COM " + _portName + " connected";
+                        MelonLogger.Msg("Prototype COM input connected to touch panel on " + _portName + " @ " + _baudRate + ".");
+
+                        byte[] buffer = new byte[256];
+                        while (_running)
+                        {
+                            int bytesToRead = serial.BytesToRead;
+                            if (bytesToRead <= 0)
+                            {
+                                Thread.Sleep(1);
+                                continue;
+                            }
+
+                            if (bytesToRead > buffer.Length)
+                            {
+                                bytesToRead = buffer.Length;
+                            }
+
+                            int read = serial.Read(buffer, 0, bytesToRead);
+                            ParseSerialPacket(buffer, read);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _status = "COM " + _portName + " unavailable: " + ex.GetType().Name;
+                    MelonLogger.Warning("Prototype COM input could not read " + _portName + ": " + ex.Message);
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+
+        private static void InitializeTouchPanel(SerialPort serial)
+        {
+            WriteAscii(serial, "{RSET}");
+            WriteAscii(serial, "{HALT}");
+            for (byte sensor = 0x41; sensor <= 0x62; sensor++)
+            {
+                WriteAscii(serial, "{LA" + (char)sensor + "r2}");
+            }
+
+            WriteAscii(serial, "{STAT}");
+            serial.DiscardInBuffer();
+        }
+
+        private static void WriteAscii(SerialPort serial, string text)
+        {
+            byte[] bytes = Encoding.ASCII.GetBytes(text);
+            serial.Write(bytes, 0, bytes.Length);
+        }
+
+        private void ParseSerialPacket(byte[] packet, int length)
+        {
+            for (int start = 0; start < length; start++)
+            {
+                if (packet[start] != (byte)'(')
+                {
+                    continue;
+                }
+
+                int end = -1;
+                for (int i = start + 1; i < length; i++)
+                {
+                    if (packet[i] == (byte)')')
+                    {
+                        end = i;
+                        break;
+                    }
+                }
+
+                if (end < 0 || end - start - 1 != 7)
+                {
+                    continue;
+                }
+
+                bool[] parsed = new bool[35];
+                int k = 0;
+                for (int i = start + 1; i < end; i++)
+                {
+                    for (int bit = 0; bit < 5; bit++)
+                    {
+                        parsed[k] = (packet[i] & (1 << bit)) != 0;
+                        k++;
+                    }
+                }
+
+                LatchSensorEdges(parsed);
+            }
+        }
+
+        private void LatchSensorEdges(bool[] parsed)
+        {
+            lock (_lock)
+            {
+                LatchOne(parsed, SensorA3, 0);
+                LatchOne(parsed, SensorA4, 1);
+                LatchOne(parsed, SensorA5, 2);
+                LatchOne(parsed, SensorA6, 3);
+                for (int i = 0; i < _sensorStates.Length; i++)
+                {
+                    _sensorStates[i] = parsed[i];
+                }
+            }
+        }
+
+        private void LatchOne(bool[] parsed, int sensorIndex, int latchIndex)
+        {
+            if (!_sensorStates[sensorIndex] && parsed[sensorIndex])
+            {
+                _latchedEdges[latchIndex] = true;
+                _status = "COM " + _portName + " A" + (sensorIndex + 1);
+                MelonLogger.Msg("Prototype COM input edge A" + (sensorIndex + 1));
+            }
+        }
+
+        private static string ResolveTouchPanelPortName()
+        {
+            string settings = ReadSettings();
+            string configured = ExtractJsonScalar(settings, "\"TouchPanel\"", "\"SerialPortOptions\"", "\"Port\"");
+            if (!string.IsNullOrEmpty(configured) && configured != "null")
+            {
+                if (configured.StartsWith("COM", StringComparison.OrdinalIgnoreCase))
+                {
+                    return configured;
+                }
+
+                return "COM" + configured;
+            }
+
+            return "COM3";
+        }
+
+        private static int ResolveTouchPanelBaudRate()
+        {
+            string settings = ReadSettings();
+            string configured = ExtractJsonScalar(settings, "\"TouchPanel\"", "\"SerialPortOptions\"", "\"BaudRate\"");
+            int parsed;
+            if (!string.IsNullOrEmpty(configured) && int.TryParse(configured, out parsed))
+            {
+                return parsed;
+            }
+
+            return 9600;
+        }
+
+        private static string ReadSettings()
         {
             try
             {
-                Type inputManagerType = Type.GetType("MajdataPlay.IO.InputManager, Assembly-CSharp", false);
-                Type buttonZoneType = Type.GetType("MajdataPlay.IO.ButtonZone, Assembly-CSharp", false);
-                Type sensorAreaType = Type.GetType("MajdataPlay.IO.SensorArea, Assembly-CSharp", false);
-                if (inputManagerType == null || buttonZoneType == null)
-                {
-                    return new MajdataInputAdapter(null, null, null, null, null, null, null, null, null, null);
-                }
-
-                MethodInfo getButtonDown = inputManagerType.GetMethod("GetButtonDown", StaticPublic, null, new[] { typeof(int), buttonZoneType }, null);
-                MethodInfo getInputDown = null;
-                object a3Sensor = null;
-                object a4Sensor = null;
-                object a5Sensor = null;
-                object a6Sensor = null;
-
-                if (sensorAreaType != null)
-                {
-                    getInputDown = inputManagerType.GetMethod("GetInputDown", StaticPublic, null, new[] { typeof(int), buttonZoneType, sensorAreaType }, null);
-                    a3Sensor = Enum.Parse(sensorAreaType, "A3");
-                    a4Sensor = Enum.Parse(sensorAreaType, "A4");
-                    a5Sensor = Enum.Parse(sensorAreaType, "A5");
-                    a6Sensor = Enum.Parse(sensorAreaType, "A6");
-                }
-
-                return new MajdataInputAdapter(
-                    getButtonDown,
-                    getInputDown,
-                    Enum.Parse(buttonZoneType, "A3"),
-                    Enum.Parse(buttonZoneType, "A4"),
-                    Enum.Parse(buttonZoneType, "A5"),
-                    Enum.Parse(buttonZoneType, "A6"),
-                    a3Sensor,
-                    a4Sensor,
-                    a5Sensor,
-                    a6Sensor);
+                string path = Path.Combine(Environment.CurrentDirectory, "settings.json");
+                return File.Exists(path) ? File.ReadAllText(path) : string.Empty;
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning("Majdata input reflection unavailable: " + ex.Message);
-                return new MajdataInputAdapter(null, null, null, null, null, null, null, null, null, null);
+                return string.Empty;
             }
         }
 
-        public bool TryRead(out RawPrototypeInput input)
+        private static string ExtractJsonScalar(string json, string section, string subsection, string key)
         {
-            input = null;
-            if (!IsAvailable)
+            int sectionIndex = json.IndexOf(section, StringComparison.Ordinal);
+            if (sectionIndex < 0)
             {
-                return false;
+                return null;
             }
 
-            try
+            int subsectionIndex = json.IndexOf(subsection, sectionIndex, StringComparison.Ordinal);
+            if (subsectionIndex < 0)
             {
-                input = new RawPrototypeInput(
-                    PrototypeInputSource.MajdataReflection,
-                    ReadButton(_a3Button, _a3Sensor),
-                    ReadButton(_a4Button, _a4Sensor),
-                    ReadButton(_a5Button, _a5Sensor),
-                    ReadButton(_a6Button, _a6Sensor));
-                return true;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning("Majdata input reflection read failed; using keyboard fallback. " + ex.Message);
-                return false;
-            }
-        }
-
-        private bool ReadButton(object button, object sensor)
-        {
-            if (_getInputDown != null && sensor != null)
-            {
-                return Convert.ToBoolean(_getInputDown.Invoke(null, new[] { (object)0, button, sensor }));
+                return null;
             }
 
-            if (_getButtonDown != null)
+            int keyIndex = json.IndexOf(key, subsectionIndex, StringComparison.Ordinal);
+            if (keyIndex < 0)
             {
-                return Convert.ToBoolean(_getButtonDown.Invoke(null, new[] { (object)0, button }));
+                return null;
             }
 
-            return false;
+            int colon = json.IndexOf(':', keyIndex);
+            if (colon < 0)
+            {
+                return null;
+            }
+
+            int valueStart = colon + 1;
+            while (valueStart < json.Length && char.IsWhiteSpace(json[valueStart]))
+            {
+                valueStart++;
+            }
+
+            if (valueStart >= json.Length)
+            {
+                return null;
+            }
+
+            if (json[valueStart] == '"')
+            {
+                int valueEnd = json.IndexOf('"', valueStart + 1);
+                return valueEnd > valueStart ? json.Substring(valueStart + 1, valueEnd - valueStart - 1) : null;
+            }
+
+            int end = valueStart;
+            while (end < json.Length && json[end] != ',' && json[end] != '}' && !char.IsWhiteSpace(json[end]))
+            {
+                end++;
+            }
+
+            return json.Substring(valueStart, end - valueStart);
         }
     }
 
@@ -582,7 +1193,7 @@ namespace UiPrototypeTemplateMod
 
         public void Update()
         {
-            Time.timeScale = 0f;
+            Time.timeScale = 1f;
             if (!_loggedUpdate)
             {
                 MelonLogger.Msg("UI prototype overlay behaviour is ticking.");
@@ -608,21 +1219,7 @@ namespace UiPrototypeTemplateMod
 
         private void InstallCanvasFallback()
         {
-            if (_canvasObject != null)
-            {
-                return;
-            }
-
-            _canvasObject = new GameObject("UI Prototype Template Canvas Placeholder");
-            UnityEngine.Object.DontDestroyOnLoad(_canvasObject);
-
-            Canvas canvas = _canvasObject.AddComponent<Canvas>();
-            canvas.overrideSorting = true;
-            canvas.sortingOrder = 32767;
-            _canvasObject.AddComponent<CanvasScaler>();
-            _canvasObject.AddComponent<GraphicRaycaster>();
-            RefreshCanvas();
-            MelonLogger.Msg("UI prototype song-first canvas installed.");
+            MelonLogger.Msg("UI prototype canvas fallback disabled; IMGUI is the authoritative prototype renderer.");
         }
 
         private void RefreshCanvas()
