@@ -82,11 +82,22 @@ namespace UiPrototypeTemplateMod
 
         internal static void RenderOverlay()
         {
+            if (ActiveSession != null)
+            {
+                if (!_loggedFirstGui)
+                {
+                    MelonLogger.Msg("UI prototype IMGUI fallback skipped because song-first canvas is active.");
+                    _loggedFirstGui = true;
+                }
+
+                return;
+            }
+
             EnsureGuiResources();
 
             if (!_loggedFirstGui)
             {
-                MelonLogger.Msg("UI prototype placeholder rendering through IMGUI.");
+                MelonLogger.Msg("UI prototype initialization placeholder rendering through IMGUI.");
                 _loggedFirstGui = true;
             }
 
