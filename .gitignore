@@ -45,6 +45,9 @@
 *.dmp
 *.crash
 
+*.png
+*.jpg
+
 # Local/editor noise
 .DS_Store
 Thumbs.db
