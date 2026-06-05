@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Virtual folders for Random Recommend and favorites
 
@@ -17,3 +17,7 @@ Add `VirtualCollectionFactory` so `Random Recommended` is always available along
 ## Blocked by
 
 - 03-level-difficulty-and-grouping-core
+
+## Comments
+
+- 2026-06-05: Implemented virtual collection metadata and `VirtualCollectionFactory`. `CatalogNavigator` now ensures `MyFavorites` and `Random Recommended` are available in default folder browsing and every alternate grouping mode. `Random Recommended` uses tile text `Random\nRecommended`, selected-info text `Random Recommended`, is marked virtual, and is online-backed. Verification: `test-unit.ps1` passed 45/45 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.

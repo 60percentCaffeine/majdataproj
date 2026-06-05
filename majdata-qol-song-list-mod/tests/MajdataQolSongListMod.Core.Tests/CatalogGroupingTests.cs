@@ -66,8 +66,7 @@ namespace MajdataQolSongListMod.Core.Tests
 
             var collections = navigator.BuildCollections(CatalogGroupingRequest.DefaultFolders(existing));
 
-            Assert.Same(existing, collections);
-            Assert.Equal(new[] { "All", "MyFavorites", "JPORTAL" }, collections.Select(collection => collection.Name).ToArray());
+            Assert.Equal(new[] { "All", "MyFavorites", "Random Recommended", "JPORTAL" }, collections.Select(collection => collection.Name).ToArray());
         }
 
         [Fact]
@@ -152,9 +151,83 @@ namespace MajdataQolSongListMod.Core.Tests
             var collections = Navigator(oneDiff, twoDiffs).BuildCollections(
                 new CatalogGroupingRequest(MapListGroupingMode.Artist, DifficultyCountFilter.MoreThan1, 0, null));
 
-            CatalogCollection artist = Assert.Single(collections);
+            CatalogCollection artist = collections.Single(collection => collection.Name == "Artist");
             Assert.DoesNotContain(artist.Rows, row => row.Hash == "one");
             Assert.Contains(artist.Rows, row => row.Hash == "two");
+        }
+
+        [Fact]
+        public void DefaultGroupingInsertsRandomRecommendedAfterExistingFavorites()
+        {
+            CatalogRow allRow = Row("all", "All Row", "Artist", null, new CatalogLevel(0, "Easy", "1"));
+            CatalogCollection[] existing =
+            {
+                new CatalogCollection("All", new[] { allRow }),
+                new CatalogCollection("MyFavorites", new CatalogRow[0]),
+                new CatalogCollection("JPORTAL", new[] { allRow })
+            };
+
+            var collections = NavigatorWithVirtuals().BuildCollections(CatalogGroupingRequest.DefaultFolders(existing));
+
+            Assert.Equal(new[] { "All", "MyFavorites", "Random Recommended", "JPORTAL" }, collections.Select(collection => collection.Name).ToArray());
+            CatalogCollection random = collections.Single(collection => collection.Name == "Random Recommended");
+            Assert.Equal("Random\nRecommended", random.TileText);
+            Assert.Equal("Random Recommended", random.SelectedInfoText);
+            Assert.True(random.IsVirtual);
+            Assert.True(random.IsOnlineBacked);
+        }
+
+        [Fact]
+        public void DefaultGroupingInsertsFavoritesAndRandomAfterAllWhenFavoritesMissing()
+        {
+            CatalogCollection[] existing =
+            {
+                new CatalogCollection("All", new CatalogRow[0]),
+                new CatalogCollection("JPORTAL", new CatalogRow[0])
+            };
+
+            var collections = NavigatorWithVirtuals().BuildCollections(CatalogGroupingRequest.DefaultFolders(existing));
+
+            Assert.Equal(new[] { "All", "MyFavorites", "Random Recommended", "JPORTAL" }, collections.Select(collection => collection.Name).ToArray());
+            Assert.True(collections.Single(collection => collection.Name == "MyFavorites").IsVirtual);
+            Assert.False(collections.Single(collection => collection.Name == "MyFavorites").IsOnlineBacked);
+        }
+
+        [Theory]
+        [InlineData(MapListGroupingMode.Default)]
+        [InlineData(MapListGroupingMode.DifficultyBracket)]
+        [InlineData(MapListGroupingMode.DifficultyLevel)]
+        [InlineData(MapListGroupingMode.Title)]
+        [InlineData(MapListGroupingMode.Artist)]
+        [InlineData(MapListGroupingMode.Rank)]
+        public void FavoritesAndRandomRecommendedAreAvailableAcrossAllGroupingModes(MapListGroupingMode groupingMode)
+        {
+            CatalogGroupingRequest request = groupingMode == MapListGroupingMode.Default
+                ? CatalogGroupingRequest.DefaultFolders(new[] { new CatalogCollection("All", new CatalogRow[0]) })
+                : new CatalogGroupingRequest(groupingMode, DifficultyCountFilter.No, 0, null);
+
+            var collections = NavigatorWithVirtuals().BuildCollections(request);
+
+            Assert.Contains(collections, collection => collection.Name == "MyFavorites");
+            Assert.Contains(collections, collection => collection.Name == "Random Recommended");
+            Assert.Equal(1, collections.Count(collection => collection.Name == "MyFavorites"));
+            Assert.Equal(1, collections.Count(collection => collection.Name == "Random Recommended"));
+            Assert.False(MapListOptionCatalog.HasGroupingLabel("All"));
+        }
+
+        [Fact]
+        public void VirtualFolderRowsComeFromFactoryInputs()
+        {
+            CatalogRow favorite = Row("fav", "Favorite", "Artist", null, new CatalogLevel(0, "Easy", "1"));
+            CatalogRow random = Row("rnd", "Random", "Artist", null, new CatalogLevel(0, "Easy", "1"));
+            CatalogNavigator navigator = new CatalogNavigator(
+                CatalogIndex.Build(new[] { Input("base", "Base", "Artist", null, "Folder", new CatalogLevel(0, "Easy", "1")) }),
+                new VirtualCollectionFactory(new[] { favorite }, new[] { random }));
+
+            var collections = navigator.BuildCollections(new CatalogGroupingRequest(MapListGroupingMode.Artist, DifficultyCountFilter.No, 0, null));
+
+            Assert.Equal("fav", Assert.Single(collections.Single(collection => collection.Name == "MyFavorites").Rows).Hash);
+            Assert.Equal("rnd", Assert.Single(collections.Single(collection => collection.Name == "Random Recommended").Rows).Hash);
         }
 
         private static CatalogGroupingRequest Request(MapListGroupingMode mode, int selectedDifficultyIndex)
@@ -174,6 +247,14 @@ namespace MajdataQolSongListMod.Core.Tests
                 row.Timestamp,
                 row.Score,
                 row.HydrationState))));
+        }
+
+        private static CatalogNavigator NavigatorWithVirtuals()
+        {
+            return new CatalogNavigator(CatalogIndex.Build(new[]
+            {
+                Input("base", "Base", "Artist", "SS", "Folder", new CatalogLevel(0, "Easy", "1"))
+            }));
         }
 
         private static CatalogRow Row(string hash, string title, string artist, string rank, params CatalogLevel[] levels)

@@ -76,14 +76,103 @@ namespace MajdataQolSongListMod.Core
     public sealed class CatalogCollection
     {
         public CatalogCollection(string name, IEnumerable<CatalogRow> rows)
+            : this(name, name, name, rows, false, false)
+        {
+        }
+
+        public CatalogCollection(
+            string name,
+            string tileText,
+            string selectedInfoText,
+            IEnumerable<CatalogRow> rows,
+            bool isVirtual,
+            bool isOnlineBacked)
         {
             Name = name;
+            TileText = string.IsNullOrWhiteSpace(tileText) ? name : tileText;
+            SelectedInfoText = string.IsNullOrWhiteSpace(selectedInfoText) ? name : selectedInfoText;
             Rows = (rows ?? Enumerable.Empty<CatalogRow>()).ToArray();
+            IsVirtual = isVirtual;
+            IsOnlineBacked = isOnlineBacked;
         }
 
         public string Name { get; private set; }
 
+        public string TileText { get; private set; }
+
+        public string SelectedInfoText { get; private set; }
+
         public IReadOnlyList<CatalogRow> Rows { get; private set; }
+
+        public bool IsVirtual { get; private set; }
+
+        public bool IsOnlineBacked { get; private set; }
+    }
+
+    public sealed class VirtualCollectionFactory
+    {
+        public const string AllName = "All";
+        public const string MyFavoritesName = "MyFavorites";
+        public const string RandomRecommendedName = "Random Recommended";
+        public const string RandomRecommendedTileText = "Random\nRecommended";
+
+        private readonly IReadOnlyList<CatalogRow> _favoriteRows;
+        private readonly IReadOnlyList<CatalogRow> _randomRecommendedRows;
+
+        public VirtualCollectionFactory(IEnumerable<CatalogRow> favoriteRows, IEnumerable<CatalogRow> randomRecommendedRows)
+        {
+            _favoriteRows = (favoriteRows ?? Enumerable.Empty<CatalogRow>()).ToArray();
+            _randomRecommendedRows = (randomRecommendedRows ?? Enumerable.Empty<CatalogRow>()).ToArray();
+        }
+
+        public IReadOnlyList<CatalogCollection> EnsureAlwaysPresent(IReadOnlyList<CatalogCollection> collections, MapListGroupingMode groupingMode)
+        {
+            List<CatalogCollection> result = new List<CatalogCollection>(collections ?? Enumerable.Empty<CatalogCollection>());
+            EnsureFavorites(result);
+            EnsureRandomRecommended(result);
+            return result.ToArray();
+        }
+
+        private void EnsureFavorites(List<CatalogCollection> collections)
+        {
+            if (collections.Any(collection => string.Equals(collection.Name, MyFavoritesName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            int insertIndex = FindFavoritesInsertIndex(collections);
+            collections.Insert(insertIndex, new CatalogCollection(
+                MyFavoritesName,
+                MyFavoritesName,
+                MyFavoritesName,
+                _favoriteRows,
+                true,
+                false));
+        }
+
+        private void EnsureRandomRecommended(List<CatalogCollection> collections)
+        {
+            if (collections.Any(collection => string.Equals(collection.Name, RandomRecommendedName, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            int favoritesIndex = collections.FindIndex(collection => string.Equals(collection.Name, MyFavoritesName, StringComparison.OrdinalIgnoreCase));
+            int insertIndex = favoritesIndex >= 0 ? favoritesIndex + 1 : FindFavoritesInsertIndex(collections);
+            collections.Insert(insertIndex, new CatalogCollection(
+                RandomRecommendedName,
+                RandomRecommendedTileText,
+                RandomRecommendedName,
+                _randomRecommendedRows,
+                true,
+                true));
+        }
+
+        private static int FindFavoritesInsertIndex(List<CatalogCollection> collections)
+        {
+            int allIndex = collections.FindIndex(collection => string.Equals(collection.Name, AllName, StringComparison.OrdinalIgnoreCase));
+            return allIndex >= 0 ? allIndex + 1 : 0;
+        }
     }
 
     public sealed class CatalogGroupingRequest
@@ -130,8 +219,14 @@ namespace MajdataQolSongListMod.Core
         };
 
         private readonly IReadOnlyList<CatalogRow> _rows;
+        private readonly VirtualCollectionFactory _virtualCollectionFactory;
 
         public CatalogNavigator(CatalogIndex index)
+            : this(index, new VirtualCollectionFactory(null, null))
+        {
+        }
+
+        public CatalogNavigator(CatalogIndex index, VirtualCollectionFactory virtualCollectionFactory)
         {
             if (index == null)
             {
@@ -139,6 +234,7 @@ namespace MajdataQolSongListMod.Core
             }
 
             _rows = index.Rows;
+            _virtualCollectionFactory = virtualCollectionFactory ?? new VirtualCollectionFactory(null, null);
         }
 
         public IReadOnlyList<CatalogCollection> BuildCollections(CatalogGroupingRequest request)
@@ -150,25 +246,30 @@ namespace MajdataQolSongListMod.Core
 
             if (request.GroupingMode == MapListGroupingMode.Default)
             {
-                return request.ExistingFolderCollections;
+                return _virtualCollectionFactory.EnsureAlwaysPresent(request.ExistingFolderCollections, request.GroupingMode);
             }
 
             IReadOnlyList<CatalogRow> filteredRows = _rows.Where(row => DifficultyCount.Passes(row, request.DifficultyFilter)).ToArray();
             switch (request.GroupingMode)
             {
                 case MapListGroupingMode.DifficultyBracket:
-                    return GroupByDifficulty(filteredRows);
+                    return WithVirtualCollections(GroupByDifficulty(filteredRows), request.GroupingMode);
                 case MapListGroupingMode.DifficultyLevel:
-                    return GroupByLevel(filteredRows, request.SelectedDifficultyIndex);
+                    return WithVirtualCollections(GroupByLevel(filteredRows, request.SelectedDifficultyIndex), request.GroupingMode);
                 case MapListGroupingMode.Artist:
-                    return GroupBySingleKey(filteredRows, row => string.IsNullOrWhiteSpace(row.Artist) ? "Unknown Artist" : row.Artist.Trim());
+                    return WithVirtualCollections(GroupBySingleKey(filteredRows, row => string.IsNullOrWhiteSpace(row.Artist) ? "Unknown Artist" : row.Artist.Trim()), request.GroupingMode);
                 case MapListGroupingMode.Title:
-                    return GroupBySingleKey(filteredRows, row => TitleBucket(row.Title));
+                    return WithVirtualCollections(GroupBySingleKey(filteredRows, row => TitleBucket(row.Title)), request.GroupingMode);
                 case MapListGroupingMode.Rank:
-                    return GroupBySingleKey(filteredRows, row => string.IsNullOrWhiteSpace(row.Score.Rank) ? "No Play" : row.Score.Rank.Trim());
+                    return WithVirtualCollections(GroupBySingleKey(filteredRows, row => string.IsNullOrWhiteSpace(row.Score.Rank) ? "No Play" : row.Score.Rank.Trim()), request.GroupingMode);
                 default:
-                    return request.ExistingFolderCollections;
+                    return _virtualCollectionFactory.EnsureAlwaysPresent(request.ExistingFolderCollections, request.GroupingMode);
             }
+        }
+
+        private IReadOnlyList<CatalogCollection> WithVirtualCollections(IReadOnlyList<CatalogCollection> collections, MapListGroupingMode groupingMode)
+        {
+            return _virtualCollectionFactory.EnsureAlwaysPresent(collections, groupingMode);
         }
 
         private static IReadOnlyList<CatalogCollection> GroupByDifficulty(IEnumerable<CatalogRow> rows)
