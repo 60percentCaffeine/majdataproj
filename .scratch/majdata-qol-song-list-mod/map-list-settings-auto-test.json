@@ -1,0 +1,76 @@
+﻿{
+    "settingsPrototype":  {
+                              "settingsGroups":  {
+                                                     "$id":  2,
+                                                     "type":  "System.String[]",
+                                                     "items":  [
+                                                                   "Map List",
+                                                                   "Game",
+                                                                   "Judge",
+                                                                   "Display",
+                                                                   "Volume",
+                                                                   "Mod",
+                                                                   "Debug",
+                                                                   "ChartSetting"
+                                                               ]
+                                                 },
+                              "activeGroup":  "Map List",
+                              "firstVisibleOption":  "Difficulty Filter",
+                              "secondVisibleOption":  "Sorting",
+                              "options":  {
+                                              "$id":  3,
+                                              "type":  "System.Object[]",
+                                              "items":  [
+                                                            {
+                                                                "$id":  4,
+                                                                "type":  "\u003c\u003ef__AnonymousType0`3[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]",
+                                                                "properties":  {
+                                                                                   "Name":  "Difficulty Filter",
+                                                                                   "Value":  "No",
+                                                                                   "Description":  "Difficulty Filter Description"
+                                                                               }
+                                                            },
+                                                            {
+                                                                "$id":  5,
+                                                                "type":  "\u003c\u003ef__AnonymousType0`3[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]",
+                                                                "properties":  {
+                                                                                   "Name":  "Sorting",
+                                                                                   "Value":  "Default",
+                                                                                   "Description":  "Sorting Description"
+                                                                               }
+                                                            },
+                                                            {
+                                                                "$id":  6,
+                                                                "type":  "\u003c\u003ef__AnonymousType0`3[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]",
+                                                                "properties":  {
+                                                                                   "Name":  "Grouping",
+                                                                                   "Value":  "Default",
+                                                                                   "Description":  "Grouping Description"
+                                                                               }
+                                                            },
+                                                            {
+                                                                "$id":  7,
+                                                                "type":  "\u003c\u003ef__AnonymousType0`3[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]",
+                                                                "properties":  {
+                                                                                   "Name":  "Downloaded Songs Filter",
+                                                                                   "Value":  "Mixed",
+                                                                                   "Description":  "Downloaded Songs Filter Description"
+                                                                               }
+                                                            }
+                                                        ]
+                                          }
+                          },
+    "settingsGroupOrderOk":  true,
+    "folderRoundTrip":  {
+                            "scene":  "List",
+                            "storageTargetIndex":  47,
+                            "carouselTargetIndex":  48,
+                            "carouselAllIndex":  49,
+                            "selectedTargetName":  "Random Recommended",
+                            "selectedAllName":  "All",
+                            "targetSwitchOk":  true,
+                            "allSwitchOk":  true
+                        },
+    "folderSwitchingOk":  true,
+    "screenshot":  "C:\\Users\\user0-pc\\majdataproj\\.scratch\\majdata-qol-song-list-mod\\screenshots\\latest-map-list-settings-prototype.png"
+}

@@ -20,8 +20,9 @@ Windows REPL.
 
 ## Screenshot capture
 
-For DPI-aware screenshots of the original game on DISPLAY2, see
-`docs/capturing-original-game-display2.md`.
+For screenshots of the original game, use the TestHookMod + Unity
+`ScreenCapture.CaptureScreenshot` workflow. See
+`docs/capturing-majdataplay-screenshots.md`.
 
 ## Agent skills
 

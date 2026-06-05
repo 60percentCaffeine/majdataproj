@@ -45,6 +45,7 @@
 *.dmp
 *.crash
 
+# Screenshot and image artifacts
 *.png
 *.jpg
 
