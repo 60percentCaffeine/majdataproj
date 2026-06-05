@@ -65,3 +65,12 @@
 - Added refresh diagnostics/status handling for progress, success, and recoverable fallback states, and forced collection refresh now syncs the active list displayer's private collection arrays.
 - Expanded `test-smoke.ps1` to verify populated Random Recommended rows, varied forced-fallback refresh batches, fallback status text, folder presence after alternate grouping, and list-to-gameplay from a recommended chart.
 - Verification: `build.ps1` passed; `test-unit.ps1` passed 120/120; expanded `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T19:46:58+09:00 - Issue 18 website collection folders
+
+- Added runtime website collection folders to the live folder carousel, inserted ahead of `Random Recommended` while preserving default folder behavior.
+- Resolved website collection hashes against live local and online rows, preferring downloaded local rows for duplicates and applying the current downloaded/online scope filter.
+- Added selected website folder status text that reports resolved-versus-total entries when collection rows cannot all be resolved locally.
+- Added recoverable failure handling that retains cached website collection folders and reports the retained-cache state through the upper-screen status treatment.
+- Expanded `test-smoke.ps1` to verify a resolved website collection folder, mixed/downloaded/online scope degradation, retained cached data after simulated failure, and list-to-gameplay from a website collection row.
+- Verification: `build.ps1` passed; `test-unit.ps1` passed 120/120; expanded `test-smoke.ps1` passed against MajdataPlay.

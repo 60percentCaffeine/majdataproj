@@ -447,6 +447,89 @@ if (-not $randomRecommended.ok -or $randomRecommended.initialCount -lt 1 -or $ra
     throw "Smoke failed: Random Recommended did not populate/refresh/fallback correctly. Initial=$($randomRecommended.initialSnapshot) First=$($randomRecommended.firstRefresh) FirstHashes=$($randomRecommended.firstHashes) Second=$($randomRecommended.secondRefresh) SecondHashes=$($randomRecommended.secondHashes) GroupedPresent=$($randomRecommended.groupedPresent) GroupedCount=$($randomRecommended.groupedCount) Error=$($randomRecommended.error)"
 }
 
+$websiteCollectionResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action<string> setScope = value => bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { value });
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    setScope("Mixed");
+    apply();
+
+    var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "All");
+    var rows = all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray().Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash)).ToArray();
+    var local = rows.FirstOrDefault(song => !song.IsOnline);
+    var online = rows.FirstOrDefault(song => song.IsOnline);
+    if (local == null || online == null) {
+        throw new Exception("Website collection canary requires both local and online rows.");
+    }
+
+    string collectionName = "QoL Website Smoke";
+    string install = (string)bridgeType.GetMethod("InstallWebsiteCollectionForDiagnostics").Invoke(null, new object[] { collectionName, local.Hash + "|" + online.Hash + "|missing-website-hash", 4 });
+    Func<string, int> collectionCount = name => {
+        var collection = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == name);
+        return collection == null ? -1 : collection.Count;
+    };
+    int mixedCount = collectionCount(collectionName);
+
+    int index = Array.FindIndex(MajdataPlay.SongStorage.Collections, c => c != null && c.Name == collectionName);
+    MajdataPlay.SongStorage.CollectionIndex = index;
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList != null) {
+        coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+        var slide = coverListType.GetMethod("SlideListInternal", Flags);
+        if (slide != null) {
+            slide.Invoke(coverList, new object[] { index });
+        }
+    }
+
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    bridgeType.GetMethod("PatchStatusOverlay", Flags).Invoke(bridge, new object[0]);
+    string statusBefore = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    setScope("DownloadedOnly");
+    apply();
+    int downloadedCount = collectionCount(collectionName);
+    setScope("OnlineOnly");
+    apply();
+    int onlineCount = collectionCount(collectionName);
+    string failure = (string)bridgeType.GetMethod("SimulateWebsiteCollectionFailureForDiagnostics").Invoke(null, null);
+    int retainedCount = collectionCount(collectionName);
+    string diagnostics = (string)bridgeType.GetMethod("WebsiteCollectionDiagnosticsSnapshot").Invoke(null, null);
+
+    return new {
+        ok = true,
+        install = install,
+        localHash = local.Hash,
+        onlineHash = online.Hash,
+        mixedCount = mixedCount,
+        downloadedCount = downloadedCount,
+        onlineCount = onlineCount,
+        retainedCount = retainedCount,
+        failure = failure,
+        diagnostics = diagnostics,
+        statusBefore = statusBefore,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, install = "", localHash = "", onlineHash = "", mixedCount = 0, downloadedCount = 0, onlineCount = 0, retainedCount = 0, failure = "", diagnostics = "", statusBefore = "", error = ex.ToString() };
+    }
+})()
+"@
+$websiteCollection = $websiteCollectionResult.result.properties
+if (-not $websiteCollection.ok -or $websiteCollection.mixedCount -lt 2 -or $websiteCollection.downloadedCount -ne 1 -or $websiteCollection.onlineCount -ne 1 -or $websiteCollection.retainedCount -ne 1 -or -not ($websiteCollection.failure -like "*retained cached*") -or -not ($websiteCollection.diagnostics -like "*QoL Website Smoke*") -or -not ($websiteCollection.statusBefore -like "*Count:2/4 resolved*")) {
+    throw "Smoke failed: website collection canary failed. Install=$($websiteCollection.install) Mixed=$($websiteCollection.mixedCount) Downloaded=$($websiteCollection.downloadedCount) Online=$($websiteCollection.onlineCount) Retained=$($websiteCollection.retainedCount) Failure=$($websiteCollection.failure) Diagnostics=$($websiteCollection.diagnostics) Status=$($websiteCollection.statusBefore) Error=$($websiteCollection.error)"
+}
+
 $levelGroupingResult = Invoke-GameEval @"
 new Func<object>(() => {
     try {
@@ -838,9 +921,9 @@ new Func<object>(() => {
         System.Reflection.BindingFlags.NonPublic |
         System.Reflection.BindingFlags.Instance;
     var collections = MajdataPlay.SongStorage.Collections;
-    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name == "Random Recommended");
+    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name == "QoL Website Smoke");
     if (index < 0) {
-        throw new Exception("No nonempty Random Recommended collection was available for gameplay canary.");
+        throw new Exception("No nonempty website collection was available for gameplay canary.");
     }
 
     MajdataPlay.SongStorage.CollectionIndex = index;
@@ -849,8 +932,15 @@ new Func<object>(() => {
     object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
         .OfType<UnityEngine.Component>()
         .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
-    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    if (coverList == null) {
+        throw new Exception("Active CoverListDisplayer was not found.");
+    }
+    coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
     var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { index });
+    }
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
     if (slide != null) {
         slide.Invoke(coverList, new object[] { 0 });
     }
@@ -875,9 +965,10 @@ if (-not $enterGame.requested) {
     throw "Smoke failed: could not request list-to-gameplay flow. $($enterGame.error)"
 }
 
-Start-Sleep -Seconds 5
-
-$gameplayCanaryResult = Invoke-GameEval @"
+$gameplayCanary = $null
+for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    Start-Sleep -Seconds 1
+    $gameplayCanaryResult = Invoke-GameEval @"
 new Func<object>(() => {
     try {
     string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
@@ -891,9 +982,13 @@ new Func<object>(() => {
     }
 })()
 "@
-$gameplayCanary = $gameplayCanaryResult.result.properties
+    $gameplayCanary = $gameplayCanaryResult.result.properties
+    if ($gameplayCanary.enteredGame) {
+        break
+    }
+}
 if (-not $gameplayCanary.enteredGame) {
-    throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
+    throw "Smoke failed: list-to-gameplay flow did not enter Game scene. RequestedCollection=$($enterGame.collection) RequestedSong=$($enterGame.song) Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended populated refresh/fallback status, level bucket grouping, live sorting/filter/scope settings, live score/rank facets, hydration gameplay pause, mod cache path, and Random Recommended list-to-gameplay flow all passed."
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended populated refresh/fallback status, website collection folders/scope/fallback, level bucket grouping, live sorting/filter/scope settings, live score/rank facets, hydration gameplay pause, mod cache path, and website collection list-to-gameplay flow all passed."

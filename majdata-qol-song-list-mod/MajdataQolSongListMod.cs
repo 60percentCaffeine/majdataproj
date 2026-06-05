@@ -167,6 +167,25 @@ namespace MajdataQolSongListMod
         public bool ShouldHydrate { get; private set; }
     }
 
+    internal sealed class WebsiteRuntimeCollection
+    {
+        public WebsiteRuntimeCollection(string name, WebsiteCollectionKind kind, IEnumerable<string> hashes, int totalCount)
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? "Website Collection" : name.Trim();
+            Kind = kind;
+            Hashes = (hashes ?? Enumerable.Empty<string>()).Where(hash => !string.IsNullOrWhiteSpace(hash)).Select(hash => hash.Trim()).ToArray();
+            TotalCount = Math.Max(totalCount, Hashes.Count);
+        }
+
+        public string Name { get; private set; }
+
+        public WebsiteCollectionKind Kind { get; private set; }
+
+        public IReadOnlyList<string> Hashes { get; private set; }
+
+        public int TotalCount { get; private set; }
+    }
+
     public sealed class QolRuntimeBridge
     {
         private const string MapListMenuName = "Map List";
@@ -185,9 +204,11 @@ namespace MajdataQolSongListMod
         private readonly HydrationScheduler _hydrationScheduler = new HydrationScheduler();
         private readonly Dictionary<string, SelectedSongRuntimeMetadata> _selectedSongMetadata = new Dictionary<string, SelectedSongRuntimeMetadata>(StringComparer.Ordinal);
         private readonly Dictionary<string, ScoreFacet> _scoreOverrides = new Dictionary<string, ScoreFacet>(StringComparer.Ordinal);
+        private readonly List<WebsiteRuntimeCollection> _websiteCollections = new List<WebsiteRuntimeCollection>();
         private readonly object _selectedSongMetadataLock = new object();
         private readonly object _scoreOverrideLock = new object();
         private readonly object _randomRecommendedLock = new object();
+        private readonly object _websiteCollectionLock = new object();
 
         private SettingManager _patchedSettingManager;
         private SongCollection[] _baseCollections;
@@ -203,6 +224,7 @@ namespace MajdataQolSongListMod
         private ISongDetail[] _randomRecommendedSongs = new ISongDetail[0];
         private int _randomRecommendedSeed = 17;
         private string _lastRandomRecommendedStatus = "Random Recommended empty";
+        private string _lastWebsiteCollectionStatus = "Website collections not loaded";
 
         public QolRuntimeBridge(Action<string> log, Action<string> error)
         {
@@ -389,6 +411,66 @@ namespace MajdataQolSongListMod
             return "randomCount=" + rows.Length.ToString(CultureInfo.InvariantCulture) +
                 "; status=" + Active._lastRandomRecommendedStatus +
                 "; hashes=" + string.Join("|", rows.Select(song => song == null ? string.Empty : song.Hash).Where(hash => !string.IsNullOrWhiteSpace(hash)).ToArray());
+        }
+
+        public static string InstallWebsiteCollectionForDiagnostics(string name, string pipeDelimitedHashes, int totalCount)
+        {
+            if (Active == null || string.IsNullOrWhiteSpace(name))
+            {
+                return "inactive";
+            }
+
+            string[] hashes = (pipeDelimitedHashes ?? string.Empty)
+                .Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(hash => hash.Trim())
+                .Where(hash => !string.IsNullOrWhiteSpace(hash))
+                .ToArray();
+
+            lock (Active._websiteCollectionLock)
+            {
+                Active._websiteCollections.RemoveAll(collection => string.Equals(collection.Name, name, StringComparison.OrdinalIgnoreCase));
+                Active._websiteCollections.Add(new WebsiteRuntimeCollection(name.Trim(), WebsiteCollectionKind.Subscribed, hashes, totalCount));
+                Active._lastWebsiteCollectionStatus = "Website collections refreshed: " + name.Trim();
+            }
+
+            Active.EnsureCollectionsApplied(force: true);
+            Active.ShowStatus(Active._lastWebsiteCollectionStatus, 3.0f);
+            return Active._lastWebsiteCollectionStatus;
+        }
+
+        public static string SimulateWebsiteCollectionFailureForDiagnostics()
+        {
+            if (Active == null)
+            {
+                return "inactive";
+            }
+
+            lock (Active._websiteCollectionLock)
+            {
+                Active._lastWebsiteCollectionStatus = "Website collection refresh failed; retained cached collections";
+            }
+
+            Active.EnsureCollectionsApplied(force: true);
+            Active.ShowStatus(Active._lastWebsiteCollectionStatus, 3.0f);
+            return Active._lastWebsiteCollectionStatus;
+        }
+
+        public static string WebsiteCollectionDiagnosticsSnapshot()
+        {
+            if (Active == null)
+            {
+                return "websiteCount=0; status=inactive";
+            }
+
+            WebsiteRuntimeCollection[] collections;
+            lock (Active._websiteCollectionLock)
+            {
+                collections = Active._websiteCollections.ToArray();
+            }
+
+            return "websiteCount=" + collections.Length.ToString(CultureInfo.InvariantCulture) +
+                "; status=" + Active._lastWebsiteCollectionStatus +
+                "; names=" + string.Join("|", collections.Select(collection => collection.Name).ToArray());
         }
 
         public static string UiDiagnosticsSnapshot()
@@ -617,7 +699,7 @@ namespace MajdataQolSongListMod
                 SongCollection[] defaultCollections = HasActiveSongTransform(settings)
                     ? TransformCollections(source, settings, selectedDifficulty)
                     : source;
-                return AppendRandomRecommended(defaultCollections);
+                return AppendRandomRecommended(AppendWebsiteCollections(defaultCollections, settings));
             }
 
             List<ISongDetail> songs = ApplySongSettings(AllSongs(source), settings, selectedDifficulty).ToList();
@@ -658,7 +740,7 @@ namespace MajdataQolSongListMod
                     break;
             }
 
-            return AppendRandomRecommended(grouped.ToArray());
+            return AppendRandomRecommended(AppendWebsiteCollections(grouped.ToArray(), settings));
         }
 
         private static bool HasActiveSongTransform(MapListSettings settings)
@@ -736,6 +818,102 @@ namespace MajdataQolSongListMod
                 Type = ChartStorageType.PlayList
             });
             return result.ToArray();
+        }
+
+        private SongCollection[] AppendWebsiteCollections(IEnumerable<SongCollection> collections, MapListSettings settings)
+        {
+            List<SongCollection> result = (collections ?? Enumerable.Empty<SongCollection>())
+                .Where(collection => collection != null && !IsWebsiteCollectionName(collection.Name))
+                .ToList();
+
+            WebsiteRuntimeCollection[] websiteCollections;
+            lock (_websiteCollectionLock)
+            {
+                websiteCollections = _websiteCollections.ToArray();
+            }
+
+            if (websiteCollections.Length == 0)
+            {
+                return result.ToArray();
+            }
+
+            List<ISongDetail> availableSongs = AllSongs(_baseCollections ?? SongStorage.Collections);
+            foreach (WebsiteRuntimeCollection websiteCollection in websiteCollections)
+            {
+                WebsiteResolution resolution = ResolveWebsiteCollectionRows(websiteCollection, availableSongs, settings.DownloadedSongsFilter);
+                SongCollection collection = new SongCollection(websiteCollection.Name, resolution.Rows)
+                {
+                    IsOnline = true,
+                    IsVirtual = true,
+                    Type = ChartStorageType.PlayList
+                };
+                result.Add(collection);
+            }
+
+            return result.ToArray();
+        }
+
+        private bool IsWebsiteCollectionName(string name)
+        {
+            lock (_websiteCollectionLock)
+            {
+                return _websiteCollections.Any(collection => string.Equals(collection.Name, name, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        private static WebsiteResolution ResolveWebsiteCollectionRows(WebsiteRuntimeCollection collection, IEnumerable<ISongDetail> availableSongs, DownloadedSongsFilter scope)
+        {
+            Dictionary<string, ISongDetail> byHash = new Dictionary<string, ISongDetail>(StringComparer.Ordinal);
+            foreach (ISongDetail song in availableSongs ?? Enumerable.Empty<ISongDetail>())
+            {
+                if (song == null || string.IsNullOrWhiteSpace(song.Hash) || !SourcePasses(song, scope))
+                {
+                    continue;
+                }
+
+                ISongDetail existing;
+                if (!byHash.TryGetValue(song.Hash, out existing) || (existing.IsOnline && !song.IsOnline))
+                {
+                    byHash[song.Hash] = song;
+                }
+            }
+
+            List<ISongDetail> rows = new List<ISongDetail>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            int unresolved = 0;
+            foreach (string hash in collection.Hashes)
+            {
+                ISongDetail song;
+                if (!byHash.TryGetValue(hash, out song))
+                {
+                    unresolved++;
+                    continue;
+                }
+
+                if (seen.Add(song.Hash))
+                {
+                    rows.Add(song);
+                }
+            }
+
+            unresolved += Math.Max(0, collection.TotalCount - collection.Hashes.Count);
+            return new WebsiteResolution(rows.ToArray(), collection.TotalCount, unresolved);
+        }
+
+        private sealed class WebsiteResolution
+        {
+            public WebsiteResolution(ISongDetail[] rows, int totalCount, int unresolvedCount)
+            {
+                Rows = rows ?? new ISongDetail[0];
+                TotalCount = totalCount;
+                UnresolvedCount = unresolvedCount;
+            }
+
+            public ISongDetail[] Rows { get; private set; }
+
+            public int TotalCount { get; private set; }
+
+            public int UnresolvedCount { get; private set; }
         }
 
         private ISongDetail[] RandomRecommendedRows(IEnumerable<SongCollection> availableCollections)
@@ -1516,11 +1694,38 @@ namespace MajdataQolSongListMod
             {
                 ShowStatus("Long press refresh to get new recommendations", 0f);
             }
+            else if (list != null && list.IsDirList && list.SelectedCollection != null)
+            {
+                string info = WebsiteCollectionInfo(list.SelectedCollection.Name);
+                if (!string.IsNullOrWhiteSpace(info))
+                {
+                    ShowStatus(info, 0f);
+                }
+            }
 
             if (_statusOverlay != null)
             {
                 _statusOverlay.Update();
             }
+        }
+
+        private string WebsiteCollectionInfo(string collectionName)
+        {
+            WebsiteRuntimeCollection collection;
+            lock (_websiteCollectionLock)
+            {
+                collection = _websiteCollections.FirstOrDefault(item => string.Equals(item.Name, collectionName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (collection == null)
+            {
+                return null;
+            }
+
+            MapListSettings settings = _runtimeSettings.Snapshot();
+            WebsiteResolution resolution = ResolveWebsiteCollectionRows(collection, AllSongs(_baseCollections ?? SongStorage.Collections), settings.DownloadedSongsFilter);
+            int resolved = resolution.Rows.Length;
+            return collection.Name + " Count:" + resolved.ToString(CultureInfo.InvariantCulture) + "/" + resolution.TotalCount.ToString(CultureInfo.InvariantCulture) + " resolved";
         }
 
         private void ShowStatus(string message, float idleSeconds)
