@@ -24,10 +24,10 @@ namespace MajdataQolSongListMod.Core.Tests
                     "Artist",
                     "Play Count",
                     "BPM",
-                    "AP/FC Rank"
+                    "AP/FC Rank",
+                    "DX Score"
                 },
                 labels);
-            Assert.DoesNotContain("DX Score", labels);
             Assert.DoesNotContain("Sync", labels);
         }
 

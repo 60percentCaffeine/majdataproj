@@ -23,7 +23,8 @@ namespace MajdataQolSongListMod.Core
         Artist,
         PlayCount,
         Bpm,
-        ApFcRank
+        ApFcRank,
+        DxScore
     }
 
     public enum MapListGroupingMode
@@ -119,7 +120,8 @@ namespace MajdataQolSongListMod.Core
             new MapListOption<MapListSortMode>(MapListSortMode.Artist, "Artist"),
             new MapListOption<MapListSortMode>(MapListSortMode.PlayCount, "Play Count"),
             new MapListOption<MapListSortMode>(MapListSortMode.Bpm, "BPM"),
-            new MapListOption<MapListSortMode>(MapListSortMode.ApFcRank, "AP/FC Rank")
+            new MapListOption<MapListSortMode>(MapListSortMode.ApFcRank, "AP/FC Rank"),
+            new MapListOption<MapListSortMode>(MapListSortMode.DxScore, "DX Score")
         };
 
         private static readonly MapListOption<MapListGroupingMode>[] GroupingModes =

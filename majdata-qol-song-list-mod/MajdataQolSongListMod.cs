@@ -184,7 +184,9 @@ namespace MajdataQolSongListMod
         private readonly MapListSettingsGroup _settingsGroup = MapListSettingsBridge.BuildGroup();
         private readonly HydrationScheduler _hydrationScheduler = new HydrationScheduler();
         private readonly Dictionary<string, SelectedSongRuntimeMetadata> _selectedSongMetadata = new Dictionary<string, SelectedSongRuntimeMetadata>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ScoreFacet> _scoreOverrides = new Dictionary<string, ScoreFacet>(StringComparer.Ordinal);
         private readonly object _selectedSongMetadataLock = new object();
+        private readonly object _scoreOverrideLock = new object();
 
         private SettingManager _patchedSettingManager;
         private SongCollection[] _baseCollections;
@@ -322,6 +324,34 @@ namespace MajdataQolSongListMod
                 string.IsNullOrWhiteSpace(length) ? "--:--" : length.Trim(),
                 ParseDiagnosticBpm(bpm),
                 false));
+            return true;
+        }
+
+        public static bool SetSelectedSongScoreForDiagnostics(double dxAccuracy, int playCount, string comboState, long dxScore)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            ISongDetail song = list == null ? null : list.SelectedSong;
+            if (song == null || string.IsNullOrWhiteSpace(song.Hash))
+            {
+                return false;
+            }
+
+            return SetSongScoreForDiagnostics(song.Hash, dxAccuracy, playCount, comboState, dxScore);
+        }
+
+        public static bool SetSongScoreForDiagnostics(string hash, double dxAccuracy, int playCount, string comboState, long dxScore)
+        {
+            if (Active == null || string.IsNullOrWhiteSpace(hash))
+            {
+                return false;
+            }
+
+            Active.SetScoreOverride(hash, RuntimeScoreFacetAdapter.FromRuntimeScore(dxAccuracy, playCount, comboState, dxScore));
             return true;
         }
 
@@ -581,7 +611,10 @@ namespace MajdataQolSongListMod
                         .Select(group => new SongCollection(group.Key, group.ToArray()));
                     break;
                 case MapListGroupingMode.Rank:
-                    grouped = new[] { new SongCollection("No Play", songs.ToArray()) };
+                    grouped = songs
+                        .GroupBy(song => RankFolder(song, selectedDifficulty))
+                        .OrderBy(group => RankFolderSortKey(group.Key))
+                        .Select(group => new SongCollection(group.Key, group.ToArray()));
                     break;
                 default:
                     grouped = source;
@@ -752,12 +785,164 @@ namespace MajdataQolSongListMod
                 case MapListSortMode.Artist:
                     return (left, right) => CompareText(left.Artist, right.Artist, SongTieBreak(left, right));
                 case MapListSortMode.PlayCount:
+                    return (left, right) => CompareNullableDescending(ScoreForSong(left, selectedDifficulty).LocalPlayCount, ScoreForSong(right, selectedDifficulty).LocalPlayCount, SongTieBreak(left, right));
                 case MapListSortMode.Rank:
+                    return (left, right) => CompareNullableDescending(RankValue(ScoreForSong(left, selectedDifficulty).Rank), RankValue(ScoreForSong(right, selectedDifficulty).Rank), SongTieBreak(left, right));
                 case MapListSortMode.ApFcRank:
-                    return SongTieBreak;
+                    return (left, right) => CompareNullableDescending(ApFcValue(ScoreForSong(left, selectedDifficulty)), ApFcValue(ScoreForSong(right, selectedDifficulty)), SongTieBreak(left, right));
+                case MapListSortMode.DxScore:
+                    return (left, right) => CompareNullableDescending(ScoreForSong(left, selectedDifficulty).DxScore, ScoreForSong(right, selectedDifficulty).DxScore, SongTieBreak(left, right));
                 default:
                     return SongTieBreak;
             }
+        }
+
+        private void SetScoreOverride(string hash, ScoreFacet score)
+        {
+            if (string.IsNullOrWhiteSpace(hash) || score == null)
+            {
+                return;
+            }
+
+            lock (_scoreOverrideLock)
+            {
+                _scoreOverrides[hash] = score;
+            }
+        }
+
+        private static ScoreFacet ScoreForSong(ISongDetail song, int selectedDifficulty)
+        {
+            if (song == null)
+            {
+                return ScoreFacet.Empty();
+            }
+
+            QolRuntimeBridge active = Active;
+            if (active != null && !string.IsNullOrWhiteSpace(song.Hash))
+            {
+                lock (active._scoreOverrideLock)
+                {
+                    ScoreFacet overrideScore;
+                    if (active._scoreOverrides.TryGetValue(song.Hash, out overrideScore))
+                    {
+                        return overrideScore;
+                    }
+                }
+            }
+
+            return ReadRuntimeScore(song, selectedDifficulty);
+        }
+
+        private static ScoreFacet ReadRuntimeScore(ISongDetail song, int selectedDifficulty)
+        {
+            try
+            {
+                Type scoreManager = typeof(SongStorage).Assembly.GetType("MajdataPlay.ScoreManager");
+                Type chartLevel = typeof(SongStorage).Assembly.GetType("MajdataPlay.ChartLevel");
+                if (scoreManager == null || chartLevel == null)
+                {
+                    return ScoreFacet.Empty();
+                }
+
+                MethodInfo getScore = scoreManager.GetMethod("GetScore", StaticFlags);
+                if (getScore == null)
+                {
+                    return ScoreFacet.Empty();
+                }
+
+                object level = Enum.ToObject(chartLevel, selectedDifficulty);
+                object score = getScore.Invoke(null, new object[] { song, level });
+                if (score == null)
+                {
+                    return ScoreFacet.Empty();
+                }
+
+                object accurate = GetMemberValue(score, "Acc");
+                double dxAccuracy;
+                double? dx = TryDouble(GetMemberValue(accurate, "DX"), out dxAccuracy) ? dxAccuracy : (double?)null;
+                long playCount;
+                long? plays = TryLong(GetMemberValue(score, "PlayCount"), out playCount) ? playCount : (long?)null;
+                long dxScore;
+                long? scoreValue = TryLong(GetMemberValue(score, "DXScore"), out dxScore) ? dxScore : (long?)null;
+                string comboState = Convert.ToString(GetMemberValue(score, "ComboState"), CultureInfo.InvariantCulture);
+                return RuntimeScoreFacetAdapter.FromRuntimeScore(dx, plays.HasValue ? ClampToInt(plays.Value) : (int?)null, comboState, scoreValue);
+            }
+            catch
+            {
+                return ScoreFacet.Empty();
+            }
+        }
+
+        private static string RankFolder(ISongDetail song, int selectedDifficulty)
+        {
+            string rank = ScoreForSong(song, selectedDifficulty).Rank;
+            return string.IsNullOrWhiteSpace(rank) ? "No Play" : rank.Trim();
+        }
+
+        private static string RankFolderSortKey(string rank)
+        {
+            int? value = RankValue(rank);
+            if (value.HasValue)
+            {
+                return (100 - value.Value).ToString("000", CultureInfo.InvariantCulture);
+            }
+
+            return string.Equals(rank, "No Play", StringComparison.OrdinalIgnoreCase) ? "999" : "998-" + rank;
+        }
+
+        private static int? RankValue(string rank)
+        {
+            if (string.IsNullOrWhiteSpace(rank))
+            {
+                return null;
+            }
+
+            switch (rank.Trim().ToUpperInvariant())
+            {
+                case "SSS+":
+                    return 12;
+                case "SSS":
+                    return 11;
+                case "SS+":
+                    return 10;
+                case "SS":
+                    return 9;
+                case "S+":
+                    return 8;
+                case "S":
+                    return 7;
+                case "AAA":
+                    return 6;
+                case "AA":
+                    return 5;
+                case "A":
+                    return 4;
+                case "BBB":
+                    return 3;
+                case "BB":
+                    return 2;
+                case "B":
+                    return 1;
+                case "C":
+                    return 0;
+                default:
+                    return null;
+            }
+        }
+
+        private static int? ApFcValue(ScoreFacet score)
+        {
+            if (score == null)
+            {
+                return null;
+            }
+
+            if (score.HasAllPerfect)
+            {
+                return 2;
+            }
+
+            return score.HasFullCombo ? 1 : (int?)null;
         }
 
         private static int SongTieBreak(ISongDetail left, ISongDetail right)
@@ -1482,6 +1667,43 @@ namespace MajdataQolSongListMod
             }
 
             return decimal.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+        }
+
+        private static bool TryDouble(object value, out double result)
+        {
+            if (value == null)
+            {
+                result = 0d;
+                return false;
+            }
+
+            return double.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+        }
+
+        private static bool TryLong(object value, out long result)
+        {
+            if (value == null)
+            {
+                result = 0L;
+                return false;
+            }
+
+            return long.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
+        }
+
+        private static int ClampToInt(long value)
+        {
+            if (value > int.MaxValue)
+            {
+                return int.MaxValue;
+            }
+
+            if (value < int.MinValue)
+            {
+                return int.MinValue;
+            }
+
+            return (int)value;
         }
 
         private static HydrationSceneState CurrentHydrationSceneState()

@@ -646,6 +646,85 @@ if (-not $downloadedFilter.ok -or $downloadedFilter.mixedLocalCount -lt 1 -or $d
     throw "Smoke failed: downloaded/online filters did not apply. Mixed=$($downloadedFilter.mixedCount) local=$($downloadedFilter.mixedLocalCount) online=$($downloadedFilter.mixedOnlineCount) downloaded=$($downloadedFilter.downloadedCount) onlineOnly=$($downloadedFilter.onlineCount) Error=$($downloadedFilter.error)"
 }
 
+$scoreFacetResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action<string> setGrouping = value => bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { value });
+    Action<string> setSorting = value => bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { value });
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    setGrouping("Default");
+    setSorting("Default");
+    apply();
+
+    var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == "All");
+    var rows = all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray().Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash)).Take(3).ToArray();
+    if (rows.Length < 3) {
+        throw new Exception("At least three songs are required for score facet canary.");
+    }
+
+    var high = rows[0];
+    var low = rows[1];
+    var noPlay = rows[2];
+    var setScore = bridgeType.GetMethod("SetSongScoreForDiagnostics");
+    setScore.Invoke(null, new object[] { high.Hash, 100.6d, 9, "APPlus", 900000L });
+    setScore.Invoke(null, new object[] { low.Hash, 12.3d, 1, "None", 100L });
+    setScore.Invoke(null, new object[] { noPlay.Hash, 0.0d, 0, "None", 0L });
+
+    setGrouping("Rank");
+    setSorting("Default");
+    apply();
+    var rankCollections = MajdataPlay.SongStorage.Collections;
+    Func<string, string, bool> containsHash = (name, hash) => {
+        var collection = rankCollections.FirstOrDefault(item => item != null && item.Name == name);
+        return collection != null && collection.ToArray().Any(song => song != null && song.Hash == hash);
+    };
+    bool highInRank = containsHash("SSS+", high.Hash);
+    bool lowInRank = containsHash("C", low.Hash);
+    bool noPlayInRank = containsHash("No Play", noPlay.Hash);
+
+    Func<string, bool> pairOrdered = sortMode => {
+        setGrouping("Default");
+        setSorting(sortMode);
+        apply();
+        var sortedAll = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == "All");
+        var sortedRows = sortedAll == null ? new MajdataPlay.ISongDetail[0] : sortedAll.ToArray();
+        int highIndex = Array.FindIndex(sortedRows, song => song != null && song.Hash == high.Hash);
+        int lowIndex = Array.FindIndex(sortedRows, song => song != null && song.Hash == low.Hash);
+        return highIndex >= 0 && lowIndex >= 0 && highIndex < lowIndex;
+    };
+
+    bool rankSort = pairOrdered("Rank");
+    bool playCountSort = pairOrdered("PlayCount");
+    bool apFcSort = pairOrdered("ApFcRank");
+    bool dxScoreSort = pairOrdered("DxScore");
+
+    return new {
+        ok = true,
+        highTitle = high.Title,
+        lowTitle = low.Title,
+        noPlayTitle = noPlay.Title,
+        highInRank = highInRank,
+        lowInRank = lowInRank,
+        noPlayInRank = noPlayInRank,
+        rankSort = rankSort,
+        playCountSort = playCountSort,
+        apFcSort = apFcSort,
+        dxScoreSort = dxScoreSort,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, highTitle = "", lowTitle = "", noPlayTitle = "", highInRank = false, lowInRank = false, noPlayInRank = false, rankSort = false, playCountSort = false, apFcSort = false, dxScoreSort = false, error = ex.ToString() };
+    }
+})()
+"@
+$scoreFacet = $scoreFacetResult.result.properties
+if (-not $scoreFacet.ok -or -not $scoreFacet.highInRank -or -not $scoreFacet.lowInRank -or -not $scoreFacet.noPlayInRank -or -not $scoreFacet.rankSort -or -not $scoreFacet.playCountSort -or -not $scoreFacet.apFcSort -or -not $scoreFacet.dxScoreSort) {
+    throw "Smoke failed: score facets did not drive rank grouping/sorting. High=$($scoreFacet.highTitle) Low=$($scoreFacet.lowTitle) NoPlay=$($scoreFacet.noPlayTitle) highInRank=$($scoreFacet.highInRank) lowInRank=$($scoreFacet.lowInRank) noPlay=$($scoreFacet.noPlayInRank) rankSort=$($scoreFacet.rankSort) playCountSort=$($scoreFacet.playCountSort) apFcSort=$($scoreFacet.apFcSort) dxScoreSort=$($scoreFacet.dxScoreSort) Error=$($scoreFacet.error)"
+}
+
 $hydrationCanaryResult = Invoke-GameEval @"
 new Func<object>(() => {
     var scheduler = new MajdataQolSongListMod.Core.HydrationScheduler();
@@ -769,4 +848,4 @@ if (-not $gameplayCanary.enteredGame) {
     throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, live score/rank facets, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."

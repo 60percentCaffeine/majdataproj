@@ -59,6 +59,8 @@ namespace MajdataQolSongListMod.Core
                     return CatalogSortMode.Bpm;
                 case MapListSortMode.ApFcRank:
                     return CatalogSortMode.ApFcRank;
+                case MapListSortMode.DxScore:
+                    return CatalogSortMode.DxScore;
                 default:
                     return CatalogSortMode.Default;
             }
@@ -262,6 +264,8 @@ namespace MajdataQolSongListMod.Core
                     return 2;
                 case "B":
                     return 1;
+                case "C":
+                    return 0;
                 default:
                     return null;
             }

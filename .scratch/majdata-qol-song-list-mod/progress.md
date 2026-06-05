@@ -47,3 +47,12 @@
 - Added a deterministic diagnostic setter for hydrated selected-song metadata and expanded `test-smoke.ps1` to verify `02:34`/`145BPM` appears without changing folder collections, collection index, or selected song hash.
 - Added unit coverage for runtime clock-length formatting.
 - Verification: `build.ps1` passed; `test-unit.ps1` passed 100/100; expanded `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T19:24:09+09:00 - Issue 16 live rank and score facets
+
+- Added a core runtime score facet adapter that maps Majdata score facts into rank, play count, AP/FC, and DX-score facets, including low-score ranks distinct from no-score rows.
+- Added `DX Score` to the Map List sort options and wired it through the core sorting request model.
+- Wired live Rank grouping to score-derived rank folders, with unplayed or unknown-score rows in `No Play`.
+- Wired live Rank, Play Count, AP/FC Rank, and DX Score sorting to available score facts via reflection over `ScoreManager.GetScore`, with deterministic diagnostic score overrides for canaries.
+- Expanded `test-smoke.ps1` to verify controlled SSS+/C/No Play grouping and pairwise rank, play count, AP/FC, and DX-score sorting without breaking list-to-gameplay.
+- Verification: `build.ps1` passed; `test-unit.ps1` passed 120/120; expanded `test-smoke.ps1` passed against MajdataPlay.
