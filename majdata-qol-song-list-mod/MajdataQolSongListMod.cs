@@ -15,6 +15,7 @@ using MelonLoader;
 using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
 [assembly: MelonInfo(typeof(MajdataQolSongListMod.MajdataQolSongListMod), "Majdata QoL Song List Mod", "0.1.0", "user0")]
@@ -153,6 +154,7 @@ namespace MajdataQolSongListMod
         private const string MapListMenuName = "Map List";
         private const string RandomRecommendedName = "Random Recommended";
         private const string RandomRecommendedTileText = "Random\nRecommended";
+        private const string MetadataLineName = "QoLSelectedSongMetadataLine";
 
         private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
@@ -172,6 +174,8 @@ namespace MajdataQolSongListMod
         private bool _reportedReady;
         private bool _reportedRandom;
         private int _frame;
+        private string _lastMetadataLine = string.Empty;
+        private QolStatusOverlay _statusOverlay;
 
         public QolRuntimeBridge(Action<string> log, Action<string> error)
         {
@@ -206,6 +210,35 @@ namespace MajdataQolSongListMod
             return true;
         }
 
+        public static bool ShowStatusForDiagnostics(string message)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            Active.ShowStatus(message, 3.0f);
+            return true;
+        }
+
+        public static string UiDiagnosticsSnapshot()
+        {
+            string metadataLine = string.Empty;
+            bool statusVisible = false;
+            string statusText = string.Empty;
+            if (Active != null)
+            {
+                metadataLine = Active._lastMetadataLine ?? string.Empty;
+                if (Active._statusOverlay != null)
+                {
+                    statusVisible = Active._statusOverlay.IsVisible;
+                    statusText = Active._statusOverlay.CurrentText;
+                }
+            }
+
+            return "metadataLine=" + metadataLine + "; statusVisible=" + statusVisible + "; statusText=" + statusText;
+        }
+
         public void Update()
         {
             _frame++;
@@ -226,6 +259,8 @@ namespace MajdataQolSongListMod
 
                 EnsureCollectionsApplied();
                 PatchSettingScene();
+                PatchSelectedSongMetadataLine();
+                PatchStatusOverlay();
                 PatchRandomRecommendedTiles();
 
                 if (!_reportedReady)
@@ -633,6 +668,177 @@ namespace MajdataQolSongListMod
             }
         }
 
+        private void PatchSelectedSongMetadataLine()
+        {
+            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            if (list == null || !list.IsChartList)
+            {
+                return;
+            }
+
+            ISongDetail song = list.SelectedSong;
+            if (song == null)
+            {
+                return;
+            }
+
+            CoverBigDisplayer big = Object.FindObjectOfType<CoverBigDisplayer>();
+            if (big == null)
+            {
+                return;
+            }
+
+            TMP_Text artist = GetPrivateField<TMP_Text>(big, "_artist");
+            TMP_Text charter = GetPrivateField<TMP_Text>(big, "_charter");
+            TMP_Text archieveRate = GetPrivateField<TMP_Text>(big, "_archieveRate");
+            TMP_Text rank = GetPrivateField<TMP_Text>(big, "_rank");
+            if (artist == null || charter == null)
+            {
+                return;
+            }
+
+            TextMeshProUGUI line = GetOrCreateMetadataLine(charter);
+            if (line == null)
+            {
+                return;
+            }
+
+            string source = SourceLabel(list.SelectedCollection, song);
+            int difficultyCount = CountDifficulties(song);
+            SelectedSongMetadata metadata = SelectedSongMetadataFormatter.FromKnownFacts(source, "--:--", difficultyCount, BpmFacet.Pending());
+            string text = metadata.FormatLine();
+
+            RectTransform artistRect = artist.transform as RectTransform;
+            RectTransform charterRect = charter.transform as RectTransform;
+            RectTransform lineRect = line.transform as RectTransform;
+            if (artistRect != null && charterRect != null && lineRect != null)
+            {
+                lineRect.anchorMin = charterRect.anchorMin;
+                lineRect.anchorMax = charterRect.anchorMax;
+                lineRect.pivot = charterRect.pivot;
+                lineRect.anchoredPosition = artistRect.anchoredPosition + new Vector2(0f, -21f);
+                lineRect.sizeDelta = new Vector2(charterRect.sizeDelta.x, 18f);
+                charterRect.anchoredPosition = artistRect.anchoredPosition + new Vector2(0f, -43f);
+
+                if (archieveRate != null && archieveRate.enabled && !string.IsNullOrWhiteSpace(archieveRate.text))
+                {
+                    RectTransform rateRect = archieveRate.transform as RectTransform;
+                    if (rateRect != null)
+                    {
+                        rateRect.anchoredPosition = artistRect.anchoredPosition + new Vector2(9.5f, -75f);
+                    }
+
+                    RectTransform rankRect = rank == null ? null : rank.transform as RectTransform;
+                    if (rankRect != null)
+                    {
+                        rankRect.anchoredPosition = artistRect.anchoredPosition + new Vector2(-35.8f, -130f);
+                    }
+                }
+            }
+
+            line.text = text;
+            line.gameObject.SetActive(true);
+            _lastMetadataLine = text;
+        }
+
+        private TextMeshProUGUI GetOrCreateMetadataLine(TMP_Text charter)
+        {
+            Transform parent = charter.transform.parent;
+            if (parent == null)
+            {
+                return null;
+            }
+
+            Transform existing = parent.Find(MetadataLineName);
+            if (existing != null)
+            {
+                return existing.GetComponent<TextMeshProUGUI>();
+            }
+
+            GameObject lineObject = new GameObject(MetadataLineName, typeof(RectTransform));
+            lineObject.transform.SetParent(parent, false);
+            TextMeshProUGUI line = lineObject.AddComponent<TextMeshProUGUI>();
+            line.font = charter.font;
+            line.fontSharedMaterial = charter.fontSharedMaterial;
+            line.color = charter.color;
+            line.alignment = TextAlignmentOptions.Left;
+            line.raycastTarget = false;
+            line.enableWordWrapping = false;
+            line.overflowMode = TextOverflowModes.Ellipsis;
+            line.fontSize = 13f;
+            return line;
+        }
+
+        private void PatchStatusOverlay()
+        {
+            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            if (list != null && list.IsDirList && list.SelectedCollection != null && list.SelectedCollection.Name == RandomRecommendedName)
+            {
+                ShowStatus("Long press refresh to get new recommendations", 0f);
+            }
+
+            if (_statusOverlay != null)
+            {
+                _statusOverlay.Update();
+            }
+        }
+
+        private void ShowStatus(string message, float idleSeconds)
+        {
+            if (_statusOverlay == null)
+            {
+                _statusOverlay = new QolStatusOverlay();
+            }
+
+            _statusOverlay.Show(message, idleSeconds);
+        }
+
+        private static string SourceLabel(SongCollection collection, ISongDetail song)
+        {
+            if (song != null && song.IsOnline)
+            {
+                return "Online";
+            }
+
+            if (collection != null)
+            {
+                ISongDetail[] songs = collection.ToArray();
+                bool hasOnline = songs.Any(candidate => candidate != null && candidate.IsOnline);
+                bool hasDownloaded = songs.Any(candidate => candidate != null && !candidate.IsOnline);
+                if (hasOnline && hasDownloaded)
+                {
+                    return "Mixed";
+                }
+
+                if (!collection.IsVirtual && !string.IsNullOrWhiteSpace(collection.Name))
+                {
+                    return SelectedSongMetadata.NormalizeSource(collection.Name);
+                }
+            }
+
+            return "Downloaded";
+        }
+
+        private static int CountDifficulties(ISongDetail song)
+        {
+            if (song == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            ReadOnlySpan<string> levels = song.Levels;
+            for (int i = 0; i < levels.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(levels[i]))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
         private string CurrentLabel(string propertyName)
         {
             switch (propertyName)
@@ -692,6 +898,181 @@ namespace MajdataQolSongListMod
             {
                 field.SetValue(target, value);
             }
+        }
+    }
+
+    public sealed class QolStatusOverlay
+    {
+        private const string RootName = "QoLUpperScreenStatus";
+
+        private GameObject _root;
+        private RectTransform _rootRect;
+        private TextMeshProUGUI _text;
+        private TextMeshProUGUI _shadow;
+        private float _hideAt;
+        private bool _persistent;
+
+        public bool IsVisible
+        {
+            get { return _root != null && _root.activeSelf; }
+        }
+
+        public string CurrentText
+        {
+            get { return _text == null ? string.Empty : _text.text ?? string.Empty; }
+        }
+
+        public void Show(string message, float idleSeconds)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                Hide();
+                return;
+            }
+
+            EnsureCreated();
+            if (_root == null || _text == null || _shadow == null || _rootRect == null)
+            {
+                return;
+            }
+
+            _persistent = idleSeconds <= 0f;
+            _hideAt = _persistent ? 0f : Time.realtimeSinceStartup + idleSeconds;
+            _text.text = message;
+            _shadow.text = message;
+            _root.SetActive(true);
+            UpdateWidth();
+        }
+
+        public void Update()
+        {
+            if (_root == null || !_root.activeSelf)
+            {
+                return;
+            }
+
+            if (!_persistent && Time.realtimeSinceStartup >= _hideAt)
+            {
+                Hide();
+                return;
+            }
+
+            UpdateWidth();
+        }
+
+        private void Hide()
+        {
+            if (_root != null)
+            {
+                _root.SetActive(false);
+            }
+        }
+
+        private void EnsureCreated()
+        {
+            if (_root != null)
+            {
+                return;
+            }
+
+            TMP_Text styleSource = FindStyleSource();
+            if (styleSource == null || styleSource.transform.parent == null)
+            {
+                return;
+            }
+
+            _root = new GameObject(RootName, typeof(RectTransform));
+            _root.transform.SetParent(styleSource.transform.parent, false);
+            _root.transform.SetAsLastSibling();
+
+            _rootRect = (RectTransform)_root.transform;
+            _rootRect.anchorMin = new Vector2(1f, 0.5f);
+            _rootRect.anchorMax = new Vector2(1f, 0.5f);
+            _rootRect.pivot = new Vector2(1f, 0.5f);
+            _rootRect.anchoredPosition = new Vector2(-22f, 5f);
+            _rootRect.sizeDelta = new Vector2(320f, 42f);
+
+            GameObject panelObject = new GameObject("StatusPanel", typeof(RectTransform));
+            panelObject.transform.SetParent(_root.transform, false);
+            Image panel = panelObject.AddComponent<Image>();
+            panel.color = new Color(0f, 0f, 0f, 0.58f);
+            panel.raycastTarget = false;
+            RectTransform panelRect = (RectTransform)panelObject.transform;
+            panelRect.anchorMin = new Vector2(0f, 0f);
+            panelRect.anchorMax = new Vector2(1f, 1f);
+            panelRect.pivot = new Vector2(0.5f, 0.5f);
+            panelRect.anchoredPosition = Vector2.zero;
+            panelRect.sizeDelta = Vector2.zero;
+
+            _shadow = CreateText("StatusTextShadow", styleSource);
+            _shadow.color = new Color(0f, 0f, 0f, 0.75f);
+            RectTransform shadowRect = (RectTransform)_shadow.transform;
+            shadowRect.anchoredPosition = new Vector2(-14.5f, -1.5f);
+
+            _text = CreateText("StatusText", styleSource);
+            _text.color = Color.white;
+            RectTransform textRect = (RectTransform)_text.transform;
+            textRect.anchoredPosition = new Vector2(-16f, 0f);
+
+            panelObject.transform.SetAsFirstSibling();
+            _shadow.transform.SetAsLastSibling();
+            _text.transform.SetAsLastSibling();
+        }
+
+        private static TextMeshProUGUI CreateText(string name, TMP_Text styleSource)
+        {
+            GameObject textObject = new GameObject(name, typeof(RectTransform));
+            TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
+            textObject.transform.SetParent(styleSource.transform.parent.Find(RootName) ?? styleSource.transform.parent, false);
+            if (styleSource != null)
+            {
+                text.font = styleSource.font;
+                text.fontSharedMaterial = styleSource.fontSharedMaterial;
+            }
+
+            text.alignment = TextAlignmentOptions.MidlineRight;
+            text.fontSize = 18f;
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 14f;
+            text.fontSizeMax = 18f;
+            text.enableWordWrapping = false;
+            text.raycastTarget = false;
+
+            RectTransform rect = (RectTransform)text.transform;
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(-32f, -4f);
+            return text;
+        }
+
+        private void UpdateWidth()
+        {
+            if (_text == null || _rootRect == null)
+            {
+                return;
+            }
+
+            _text.ForceMeshUpdate();
+            float width = Mathf.Clamp(_text.preferredWidth + 44f, 240f, 560f);
+            _rootRect.sizeDelta = new Vector2(width, 42f);
+        }
+
+        private static TMP_Text FindStyleSource()
+        {
+            TMP_Text[] texts = Resources.FindObjectsOfTypeAll<TMP_Text>();
+            TMP_Text source = texts.FirstOrDefault(text =>
+                text != null &&
+                text.font != null &&
+                text.gameObject != null &&
+                text.gameObject.activeInHierarchy &&
+                ((text.text ?? string.Empty).Contains("Press Select P1") || (text.text ?? string.Empty).Contains("Press")));
+
+            return source ?? texts.FirstOrDefault(text =>
+                text != null &&
+                text.font != null &&
+                text.gameObject != null &&
+                text.gameObject.activeInHierarchy);
         }
     }
 }

@@ -182,4 +182,173 @@ if (-not $setting.mapListFirst -or -not $setting.gameSecond) {
     throw "Smoke failed: Map List did not appear before Game. Order: $($setting.order -join ', ')"
 }
 
-Write-Host "Smoke passed: default collections include All/MyFavorites/Random Recommended, difficulty grouping rebuilds folders, and settings order starts Map List, Game."
+Invoke-GameEval @"
+new Func<object>(() => {
+    const System.Reflection.BindingFlags InstanceFlags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+
+    Type sceneSwitcherType = Type.GetType("MajdataPlay.SceneSwitcher, Assembly-CSharp", true);
+    object switcher = UnityEngine.Resources.FindObjectsOfTypeAll(sceneSwitcherType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (switcher != null) {
+        sceneSwitcherType.GetMethod("SwitchScene", InstanceFlags).Invoke(switcher, new object[] { "List", true });
+    }
+
+    return new { requested = switcher != null };
+})()
+"@ | Out-Null
+
+Start-Sleep -Seconds 5
+
+Invoke-GameEval @"
+new Func<object>(() => {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+
+    var collections = MajdataPlay.SongStorage.Collections;
+    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name != "Random Recommended");
+    if (index < 0) {
+        throw new Exception("No nonempty collection was available for metadata smoke.");
+    }
+
+    MajdataPlay.SongStorage.CollectionIndex = index;
+    collections[index].Index = 0;
+
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList == null) {
+        throw new Exception("Active CoverListDisplayer was not found.");
+    }
+
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { 0 });
+    }
+
+    return new { collection = collections[index].Name, song = collections[index].Current.Title };
+})()
+"@ | Out-Null
+
+Start-Sleep -Seconds 2
+
+$metadataResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bigType = Type.GetType("MajdataPlay.Scenes.List.CoverBigDisplayer, Assembly-CSharp", true);
+    UnityEngine.Component big = UnityEngine.Resources.FindObjectsOfTypeAll(bigType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (big == null) {
+        return new { found = false, text = "", listStillPresent = false };
+    }
+
+    TMPro.TMP_Text line = big.GetComponentsInChildren<TMPro.TMP_Text>(true)
+        .FirstOrDefault(t => t != null && t.gameObject != null && t.gameObject.name == "QoLSelectedSongMetadataLine");
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    bool listStillPresent = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .Any(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+
+    return new {
+        found = line != null && line.gameObject.activeInHierarchy,
+        text = line == null ? "" : line.text,
+        listStillPresent = listStillPresent
+    };
+})()
+"@
+$metadata = $metadataResult.result.properties
+if (-not $metadata.found) {
+    throw "Smoke failed: selected-song metadata line was not found."
+}
+if (-not $metadata.listStillPresent) {
+    throw "Smoke failed: list UI was replaced or missing after metadata patch."
+}
+if (-not (($metadata.text -like "* | *") -and ($metadata.text -like "* diffs | *"))) {
+    throw "Smoke failed: metadata line did not match expected format. Text: $($metadata.text)"
+}
+
+Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    bool shown = (bool)bridgeType.GetMethod("ShowStatusForDiagnostics").Invoke(null, new object[] { "Calculating BPM for 4/18 songs..." });
+    return new { shown = shown };
+})()
+"@ | Out-Null
+
+Start-Sleep -Seconds 1
+
+$statusVisibleResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    return new { snapshot = snapshot };
+})()
+"@
+$statusVisibleSnapshot = $statusVisibleResult.result.properties.snapshot
+if (-not ($statusVisibleSnapshot -like "*statusVisible=True*" -and $statusVisibleSnapshot -like "*Calculating BPM for 4/18 songs...*")) {
+    throw "Smoke failed: hydration status overlay was not visible. Snapshot: $statusVisibleSnapshot"
+}
+
+Start-Sleep -Seconds 4
+
+$statusHiddenResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    return new { snapshot = snapshot };
+})()
+"@
+$statusHiddenSnapshot = $statusHiddenResult.result.properties.snapshot
+if (-not ($statusHiddenSnapshot -like "*statusVisible=False*")) {
+    throw "Smoke failed: hydration status overlay did not hide after idle. Snapshot: $statusHiddenSnapshot"
+}
+
+Invoke-GameEval @"
+new Func<object>(() => {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    var collections = MajdataPlay.SongStorage.Collections;
+    int randomIndex = Array.FindIndex(collections, c => c != null && c.Name == "Random Recommended");
+    if (randomIndex < 0) {
+        throw new Exception("Random Recommended collection was not found.");
+    }
+
+    MajdataPlay.SongStorage.CollectionIndex = randomIndex;
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+    var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { randomIndex });
+    }
+
+    return new { randomIndex = randomIndex };
+})()
+"@ | Out-Null
+
+Start-Sleep -Seconds 2
+
+$refreshStatusResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    return new { snapshot = snapshot };
+})()
+"@
+$refreshSnapshot = $refreshStatusResult.result.properties.snapshot
+if (-not ($refreshSnapshot -like "*Long press refresh to get new recommendations*")) {
+    throw "Smoke failed: Random Recommended refresh instruction was not shown. Snapshot: $refreshSnapshot"
+}
+
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, and Random Recommended refresh status all render."
