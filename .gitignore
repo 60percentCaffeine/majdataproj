@@ -23,6 +23,12 @@
 /ui-prototype-template-mod/src/**/obj/
 /ui-prototype-template-mod/tests/**/bin/
 /ui-prototype-template-mod/tests/**/obj/
+/majdata-qol-song-list-mod/bin/
+/majdata-qol-song-list-mod/artifacts/
+/majdata-qol-song-list-mod/src/**/bin/
+/majdata-qol-song-list-mod/src/**/obj/
+/majdata-qol-song-list-mod/tests/**/bin/
+/majdata-qol-song-list-mod/tests/**/obj/
 /mod-test-tools/test-hook-mod/bin/
 /mod-test-tools/test-hook-mod/obj/
 /mod-test-tools/test-hook-mod/packages/
