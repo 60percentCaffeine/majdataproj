@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Chart data and online stats hydrators
 
@@ -18,3 +18,7 @@ Implement `ChartDataHydrator` for BPM calculation from `maidata` and `OnlineStat
 ## Blocked by
 
 - 08-hydration-store-and-scheduler
+
+## Comments
+
+- 2026-06-05: Implemented `ChartDataHydrator` and `OnlineStatsHydrator`. BPM hydration extracts Simai timing BPM markers from `maidata`, formats fixed/range/pending/unknown BPM values, fetches online `maidata` only when queued, and returns recoverable failures. Online stats hydration parses interaction JSON, uses 24-hour stale-while-revalidate cache reads, records failures without deleting stale data, and degrades missing play count to unknown. Verification: `test-unit.ps1` passed 87/87 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.
