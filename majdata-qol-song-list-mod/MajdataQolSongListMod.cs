@@ -1,10 +1,12 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using MajdataPlay;
 using MajdataPlay.Collections;
 using MajdataPlay.Scenes.List;
@@ -149,6 +151,22 @@ namespace MajdataQolSongListMod
         }
     }
 
+    internal sealed class SelectedSongRuntimeMetadata
+    {
+        public SelectedSongRuntimeMetadata(string length, BpmFacet bpm, bool shouldHydrate)
+        {
+            Length = string.IsNullOrWhiteSpace(length) ? "--:--" : length.Trim();
+            Bpm = bpm ?? BpmFacet.Pending();
+            ShouldHydrate = shouldHydrate;
+        }
+
+        public string Length { get; private set; }
+
+        public BpmFacet Bpm { get; private set; }
+
+        public bool ShouldHydrate { get; private set; }
+    }
+
     public sealed class QolRuntimeBridge
     {
         private const string MapListMenuName = "Map List";
@@ -164,6 +182,9 @@ namespace MajdataQolSongListMod
         private readonly Action<string> _error;
         private readonly MapListRuntimeSettings _runtimeSettings = new MapListRuntimeSettings();
         private readonly MapListSettingsGroup _settingsGroup = MapListSettingsBridge.BuildGroup();
+        private readonly HydrationScheduler _hydrationScheduler = new HydrationScheduler();
+        private readonly Dictionary<string, SelectedSongRuntimeMetadata> _selectedSongMetadata = new Dictionary<string, SelectedSongRuntimeMetadata>(StringComparer.Ordinal);
+        private readonly object _selectedSongMetadataLock = new object();
 
         private SettingManager _patchedSettingManager;
         private SongCollection[] _baseCollections;
@@ -280,6 +301,27 @@ namespace MajdataQolSongListMod
             }
 
             Active.ShowStatus(message, 3.0f);
+            return true;
+        }
+
+        public static bool SetSelectedSongMetadataForDiagnostics(string length, string bpm)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            ISongDetail song = list == null ? null : list.SelectedSong;
+            if (song == null || string.IsNullOrWhiteSpace(song.Hash))
+            {
+                return false;
+            }
+
+            Active.SetSelectedSongMetadata(song.Hash, new SelectedSongRuntimeMetadata(
+                string.IsNullOrWhiteSpace(length) ? "--:--" : length.Trim(),
+                ParseDiagnosticBpm(bpm),
+                false));
             return true;
         }
 
@@ -1023,7 +1065,16 @@ namespace MajdataQolSongListMod
 
             string source = SourceLabel(list.SelectedCollection, song);
             int difficultyCount = CountDifficulties(song);
-            SelectedSongMetadata metadata = SelectedSongMetadataFormatter.FromKnownFacts(source, "--:--", difficultyCount, BpmFacet.Pending());
+            int selectedDifficulty = SelectedDifficultyIndex();
+            SelectedSongRuntimeMetadata runtimeMetadata = GetSelectedSongMetadata(song);
+            if (runtimeMetadata == null || runtimeMetadata.ShouldHydrate)
+            {
+                QueueSelectedSongMetadataHydration(song, selectedDifficulty);
+            }
+
+            string length = runtimeMetadata == null ? "--:--" : runtimeMetadata.Length;
+            BpmFacet bpm = runtimeMetadata == null ? BpmFacet.Pending() : runtimeMetadata.Bpm;
+            SelectedSongMetadata metadata = SelectedSongMetadataFormatter.FromKnownFacts(source, length, difficultyCount, bpm);
             string text = metadata.FormatLine();
 
             RectTransform artistRect = artist.transform as RectTransform;
@@ -1109,6 +1160,392 @@ namespace MajdataQolSongListMod
             }
 
             _statusOverlay.Show(message, idleSeconds);
+        }
+
+        private SelectedSongRuntimeMetadata GetSelectedSongMetadata(ISongDetail song)
+        {
+            if (song == null || string.IsNullOrWhiteSpace(song.Hash))
+            {
+                return null;
+            }
+
+            lock (_selectedSongMetadataLock)
+            {
+                SelectedSongRuntimeMetadata metadata;
+                return _selectedSongMetadata.TryGetValue(song.Hash, out metadata) ? metadata : null;
+            }
+        }
+
+        private void SetSelectedSongMetadata(string hash, SelectedSongRuntimeMetadata metadata)
+        {
+            if (string.IsNullOrWhiteSpace(hash) || metadata == null)
+            {
+                return;
+            }
+
+            lock (_selectedSongMetadataLock)
+            {
+                _selectedSongMetadata[hash] = metadata;
+            }
+        }
+
+        private void QueueSelectedSongMetadataHydration(ISongDetail song, int selectedDifficulty)
+        {
+            if (song == null || string.IsNullOrWhiteSpace(song.Hash) || !_hydrationScheduler.AllowsHydration(CurrentHydrationSceneState()))
+            {
+                return;
+            }
+
+            string hash = song.Hash;
+            lock (_selectedSongMetadataLock)
+            {
+                SelectedSongRuntimeMetadata existing;
+                if (_selectedSongMetadata.TryGetValue(hash, out existing) && !existing.ShouldHydrate)
+                {
+                    return;
+                }
+
+                _selectedSongMetadata[hash] = new SelectedSongRuntimeMetadata(
+                    existing == null ? "--:--" : existing.Length,
+                    existing == null ? BpmFacet.Pending() : existing.Bpm,
+                    true);
+            }
+
+            Task.Run(() => HydrateSelectedSongMetadata(hash, song, selectedDifficulty));
+        }
+
+        private void HydrateSelectedSongMetadata(string hash, ISongDetail song, int selectedDifficulty)
+        {
+            string length = "--:--";
+            BpmFacet bpm = BpmFacet.Unknown();
+
+            using (CancellationTokenSource cts = new CancellationTokenSource())
+            {
+                cts.CancelAfter(TimeSpan.FromSeconds(12));
+                try
+                {
+                    length = ResolveSongLength(song, cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    _log("Selected-song length hydration skipped for " + hash + ": " + ex.Message);
+                }
+
+                try
+                {
+                    bpm = ResolveSongBpm(song, selectedDifficulty, cts.Token) ?? BpmFacet.Unknown();
+                }
+                catch (Exception ex)
+                {
+                    _log("Selected-song BPM hydration skipped for " + hash + ": " + ex.Message);
+                }
+            }
+
+            SetSelectedSongMetadata(hash, new SelectedSongRuntimeMetadata(length, bpm, false));
+        }
+
+        private static string ResolveSongLength(ISongDetail song, CancellationToken token)
+        {
+            object sample = InvokeValueTaskResult(song, "GetPreviewAudioTrackAsync", new object[] { null, token });
+            if (sample == null)
+            {
+                return "--:--";
+            }
+
+            object length = GetMemberValue(sample, "Length");
+            if (length is TimeSpan)
+            {
+                return SelectedSongMetadataFormatter.FormatLength((TimeSpan)length);
+            }
+
+            return "--:--";
+        }
+
+        private static BpmFacet ResolveSongBpm(ISongDetail song, int selectedDifficulty, CancellationToken token)
+        {
+            object maidata = InvokeValueTaskResult(song, "GetMaidataAsync", new object[] { false, null, token });
+            BpmFacet parsed = ExtractBpmFromMaidata(maidata, selectedDifficulty);
+            if (parsed != null && parsed.HasKnownValue)
+            {
+                return parsed;
+            }
+
+            return TryBpmFromChartAnalyzer();
+        }
+
+        private static object InvokeValueTaskResult(object target, string methodName, object[] args)
+        {
+            if (target == null)
+            {
+                return null;
+            }
+
+            MethodInfo method = target.GetType().GetMethod(methodName, InstanceFlags);
+            if (method == null)
+            {
+                return null;
+            }
+
+            object valueTask = method.Invoke(target, args);
+            if (valueTask == null)
+            {
+                return null;
+            }
+
+            MethodInfo asTask = valueTask.GetType().GetMethod("AsTask", Type.EmptyTypes);
+            if (asTask == null)
+            {
+                return null;
+            }
+
+            Task task = asTask.Invoke(valueTask, null) as Task;
+            if (task == null)
+            {
+                return null;
+            }
+
+            if (!task.Wait(15000))
+            {
+                return null;
+            }
+
+            PropertyInfo result = task.GetType().GetProperty("Result", InstanceFlags);
+            return result == null ? null : result.GetValue(task, null);
+        }
+
+        private static BpmFacet ExtractBpmFromMaidata(object maidata, int selectedDifficulty)
+        {
+            object charts = GetMemberValue(maidata, "Charts");
+            object selectedChart = GetIndexedValue(charts, selectedDifficulty);
+            BpmFacet selectedBpm = ExtractBpmFromChart(selectedChart);
+            if (selectedBpm != null && selectedBpm.HasKnownValue)
+            {
+                return selectedBpm;
+            }
+
+            foreach (object chart in EnumerateValues(charts))
+            {
+                BpmFacet chartBpm = ExtractBpmFromChart(chart);
+                if (chartBpm != null && chartBpm.HasKnownValue)
+                {
+                    return chartBpm;
+                }
+            }
+
+            return null;
+        }
+
+        private static BpmFacet ExtractBpmFromChart(object chart)
+        {
+            object noteTimings = GetMemberValue(chart, "NoteTimings");
+            List<decimal> values = new List<decimal>();
+            foreach (object timing in EnumerateValues(noteTimings))
+            {
+                decimal bpm;
+                if (TryDecimal(GetMemberValue(timing, "Bpm"), out bpm) && bpm > 0m)
+                {
+                    values.Add(bpm);
+                }
+            }
+
+            if (values.Count == 0)
+            {
+                return null;
+            }
+
+            decimal minimum = values[0];
+            decimal maximum = values[0];
+            for (int i = 1; i < values.Count; i++)
+            {
+                minimum = Math.Min(minimum, values[i]);
+                maximum = Math.Max(maximum, values[i]);
+            }
+
+            return BpmFacet.KnownRange(minimum, maximum);
+        }
+
+        private static BpmFacet TryBpmFromChartAnalyzer()
+        {
+            Type analyzerType = typeof(CoverListDisplayer).Assembly.GetType("MajdataPlay.Scenes.Game.ChartAnalyzer");
+            if (analyzerType == null)
+            {
+                return null;
+            }
+
+            Object analyzer = Object.FindObjectOfType(analyzerType, false);
+            object value = analyzer == null ? null : GetMemberValue(analyzer, "LastAnalyzeBpm");
+            decimal bpm;
+            return TryDecimal(value, out bpm) && bpm > 0m ? BpmFacet.Known(bpm) : null;
+        }
+
+        private static object GetMemberValue(object target, string name)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(name))
+            {
+                return null;
+            }
+
+            Type type = target.GetType();
+            PropertyInfo property = type.GetProperty(name, InstanceFlags);
+            if (property != null)
+            {
+                return property.GetValue(target, null);
+            }
+
+            FieldInfo field = type.GetField(name, InstanceFlags);
+            return field == null ? null : field.GetValue(target);
+        }
+
+        private static object GetIndexedValue(object target, int index)
+        {
+            if (target == null || index < 0)
+            {
+                return null;
+            }
+
+            Array array = target as Array;
+            if (array != null)
+            {
+                return index < array.Length ? array.GetValue(index) : null;
+            }
+
+            IList list = target as IList;
+            if (list != null)
+            {
+                return index < list.Count ? list[index] : null;
+            }
+
+            PropertyInfo indexer = target.GetType().GetProperty("Item", InstanceFlags);
+            if (indexer != null)
+            {
+                try
+                {
+                    return indexer.GetValue(target, new object[] { index });
+                }
+                catch
+                {
+                }
+            }
+
+            return null;
+        }
+
+        private static IEnumerable<object> EnumerateValues(object target)
+        {
+            if (target == null)
+            {
+                yield break;
+            }
+
+            IEnumerable enumerable = target as IEnumerable;
+            if (enumerable != null)
+            {
+                foreach (object value in enumerable)
+                {
+                    yield return value;
+                }
+
+                yield break;
+            }
+
+            int count = IndexedCount(target);
+            for (int i = 0; i < count; i++)
+            {
+                object value = GetIndexedValue(target, i);
+                if (value != null)
+                {
+                    yield return value;
+                }
+            }
+        }
+
+        private static int IndexedCount(object target)
+        {
+            if (target == null)
+            {
+                return 0;
+            }
+
+            object count = GetMemberValue(target, "Count") ?? GetMemberValue(target, "Length");
+            int result;
+            return count != null && int.TryParse(Convert.ToString(count, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out result)
+                ? result
+                : 0;
+        }
+
+        private static bool TryDecimal(object value, out decimal result)
+        {
+            if (value == null)
+            {
+                result = 0m;
+                return false;
+            }
+
+            return decimal.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+        }
+
+        private static HydrationSceneState CurrentHydrationSceneState()
+        {
+            string sceneName = SceneManager.GetActiveScene().name ?? string.Empty;
+            if (sceneName.IndexOf("Practice", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.Practice;
+            }
+
+            if (sceneName.IndexOf("Game", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.Gameplay;
+            }
+
+            if (sceneName.IndexOf("Setting", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.Setting;
+            }
+
+            if (sceneName.IndexOf("List", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.List;
+            }
+
+            if (sceneName.IndexOf("Login", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.Login;
+            }
+
+            if (sceneName.IndexOf("Title", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return HydrationSceneState.Title;
+            }
+
+            return HydrationSceneState.Menu;
+        }
+
+        private static BpmFacet ParseDiagnosticBpm(string bpm)
+        {
+            if (string.IsNullOrWhiteSpace(bpm))
+            {
+                return BpmFacet.Unknown();
+            }
+
+            string normalized = bpm.Replace("BPM", string.Empty).Replace("bpm", string.Empty).Trim();
+            string[] parts = normalized.Split('-');
+            decimal first;
+            if (parts.Length == 1 && decimal.TryParse(parts[0].Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out first) && first > 0m)
+            {
+                return BpmFacet.Known(first);
+            }
+
+            decimal second;
+            if (parts.Length == 2 &&
+                decimal.TryParse(parts[0].Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out first) &&
+                decimal.TryParse(parts[1].Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out second) &&
+                first > 0m &&
+                second > 0m)
+            {
+                return BpmFacet.KnownRange(Math.Min(first, second), Math.Max(first, second));
+            }
+
+            return BpmFacet.Unknown();
         }
 
         private static string SourceLabel(SongCollection collection, ISongDetail song)

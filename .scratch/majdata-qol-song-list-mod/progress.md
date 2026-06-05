@@ -38,3 +38,12 @@
 - Added diagnostic setters and an immediate apply hook for deterministic in-game canaries.
 - Expanded `test-smoke.ps1` to verify title sorting visibly reorders a collection, all difficulty filters narrow/pass correctly, downloaded-only and online-only scopes contain the right row types, default/alternate folders still include `Random Recommended`, and list-to-gameplay still works with non-default title sorting active.
 - Verification: `test-unit.ps1` passed 96/96; expanded `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T19:11:25+09:00 - Issue 15 selected-song duration and BPM hydration
+
+- Replaced hardcoded selected-song metadata fallbacks with a runtime metadata fact cache keyed by song hash.
+- Added background hydration for selected-song duration via preview audio length and BPM via parsed chart timing data, gated by the existing hydration scheduler so gameplay/practice scenes do not run hydration.
+- Preserved explicit `BPM pending` and `unknown BPM` states, and kept unknown duration as `--:--`.
+- Added a deterministic diagnostic setter for hydrated selected-song metadata and expanded `test-smoke.ps1` to verify `02:34`/`145BPM` appears without changing folder collections, collection index, or selected song hash.
+- Added unit coverage for runtime clock-length formatting.
+- Verification: `build.ps1` passed; `test-unit.ps1` passed 100/100; expanded `test-smoke.ps1` passed against MajdataPlay.

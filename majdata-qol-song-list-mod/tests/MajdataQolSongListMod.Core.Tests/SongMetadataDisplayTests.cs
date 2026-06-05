@@ -1,3 +1,4 @@
+using System;
 using MajdataQolSongListMod.Core;
 using Xunit;
 
@@ -42,6 +43,18 @@ namespace MajdataQolSongListMod.Core.Tests
                 BpmFacet.Unknown());
 
             Assert.StartsWith(source + " | --:-- | 2 diffs | unknown BPM", metadata.FormatLine());
+        }
+
+        [Theory]
+        [InlineData(null, "--:--")]
+        [InlineData(0, "--:--")]
+        [InlineData(80, "01:20")]
+        [InlineData(3723, "1:02:03")]
+        public void RuntimeLengthFormatsAsClockText(int? seconds, string expected)
+        {
+            Assert.Equal(
+                expected,
+                SelectedSongMetadataFormatter.FormatLength(seconds.HasValue ? TimeSpan.FromSeconds(seconds.Value) : (TimeSpan?)null));
         }
     }
 }

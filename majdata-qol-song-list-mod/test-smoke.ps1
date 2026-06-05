@@ -277,6 +277,51 @@ if (-not (($metadata.text -like "* | *") -and ($metadata.text -like "* diffs | *
     throw "Smoke failed: metadata line did not match expected format. Text: $($metadata.text)"
 }
 
+$hydratedMetadataPrepareResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    string beforeCollections = string.Join("|", MajdataPlay.SongStorage.Collections.Select(c => c == null ? "<null>" : c.Name));
+    int beforeCollectionIndex = MajdataPlay.SongStorage.CollectionIndex;
+    string beforeHash = MajdataPlay.SongStorage.WorkingCollection.Current == null ? "" : MajdataPlay.SongStorage.WorkingCollection.Current.Hash;
+    bool set = (bool)bridgeType.GetMethod("SetSelectedSongMetadataForDiagnostics").Invoke(null, new object[] { "02:34", "145" });
+    return new {
+        set = set,
+        beforeCollections = beforeCollections,
+        beforeCollectionIndex = beforeCollectionIndex,
+        beforeHash = beforeHash
+    };
+})()
+"@
+$hydratedMetadataPrepare = $hydratedMetadataPrepareResult.result.properties
+if (-not $hydratedMetadataPrepare.set) {
+    throw "Smoke failed: selected-song hydrated metadata diagnostic value could not be set."
+}
+
+Start-Sleep -Seconds 1
+
+$hydratedMetadataResult = Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    string afterCollections = string.Join("|", MajdataPlay.SongStorage.Collections.Select(c => c == null ? "<null>" : c.Name));
+    int afterCollectionIndex = MajdataPlay.SongStorage.CollectionIndex;
+    string afterHash = MajdataPlay.SongStorage.WorkingCollection.Current == null ? "" : MajdataPlay.SongStorage.WorkingCollection.Current.Hash;
+    return new {
+        snapshot = snapshot,
+        afterCollections = afterCollections,
+        afterCollectionIndex = afterCollectionIndex,
+        afterHash = afterHash
+    };
+})()
+"@
+$hydratedMetadata = $hydratedMetadataResult.result.properties
+if (-not (($hydratedMetadata.snapshot -like "*02:34*") -and ($hydratedMetadata.snapshot -like "*145BPM*"))) {
+    throw "Smoke failed: hydrated selected-song metadata did not display duration and BPM. Snapshot: $($hydratedMetadata.snapshot)"
+}
+if ($hydratedMetadata.afterCollections -ne $hydratedMetadataPrepare.beforeCollections -or $hydratedMetadata.afterCollectionIndex -ne $hydratedMetadataPrepare.beforeCollectionIndex -or $hydratedMetadata.afterHash -ne $hydratedMetadataPrepare.beforeHash) {
+    throw "Smoke failed: hydrated metadata changed list collections or cursor. Before=$($hydratedMetadataPrepare.beforeCollections) After=$($hydratedMetadata.afterCollections) BeforeIndex=$($hydratedMetadataPrepare.beforeCollectionIndex) AfterIndex=$($hydratedMetadata.afterCollectionIndex) BeforeHash=$($hydratedMetadataPrepare.beforeHash) AfterHash=$($hydratedMetadata.afterHash)"
+}
+
 Invoke-GameEval @"
 new Func<object>(() => {
     Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
@@ -724,4 +769,4 @@ if (-not $gameplayCanary.enteredGame) {
     throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."

@@ -47,5 +47,21 @@ namespace MajdataQolSongListMod.Core
         {
             return new SelectedSongMetadata(source, length, difficultyCount, bpm);
         }
+
+        public static string FormatLength(TimeSpan? length)
+        {
+            if (!length.HasValue || length.Value.TotalSeconds <= 0)
+            {
+                return "--:--";
+            }
+
+            int totalSeconds = (int)Math.Round(length.Value.TotalSeconds);
+            int hours = totalSeconds / 3600;
+            int minutes = (totalSeconds % 3600) / 60;
+            int seconds = totalSeconds % 60;
+            return hours > 0
+                ? string.Format("{0}:{1:00}:{2:00}", hours, minutes, seconds)
+                : string.Format("{0:00}:{1:00}", minutes, seconds);
+        }
     }
 }
