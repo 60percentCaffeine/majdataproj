@@ -89,13 +89,16 @@ namespace MajdataQolSongListMod.Core
                 throw new ArgumentNullException("value");
             }
 
-            File.WriteAllLines(PathFor(value.Key, value.Kind), new[]
-            {
-                value.Key ?? string.Empty,
-                value.Kind.ToString(),
-                value.FetchedAt.ToString("O", CultureInfo.InvariantCulture),
-                value.Payload ?? string.Empty
-            });
+            string text = string.Join(
+                Environment.NewLine,
+                new[]
+                {
+                    value.Key ?? string.Empty,
+                    value.Kind.ToString(),
+                    value.FetchedAt.ToString("O", CultureInfo.InvariantCulture),
+                    value.Payload ?? string.Empty
+                });
+            File.WriteAllText(PathFor(value.Key, value.Kind), text);
         }
 
         public HydrationStoreReadResult Read(string key, HydrationDataKind kind, DateTimeOffset now, TimeSpan freshness)

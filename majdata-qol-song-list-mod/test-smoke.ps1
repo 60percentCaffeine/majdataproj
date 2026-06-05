@@ -351,4 +351,190 @@ if (-not ($refreshSnapshot -like "*Long press refresh to get new recommendations
     throw "Smoke failed: Random Recommended refresh instruction was not shown. Snapshot: $refreshSnapshot"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, and Random Recommended refresh status all render."
+$levelGroupingResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "DifficultyBracket" });
+    var collections = MajdataPlay.SongStorage.Collections;
+    var song = collections.SelectMany(c => c.ToArray()).FirstOrDefault(s => s != null && s.Levels.Length > 0 && !string.IsNullOrWhiteSpace(s.Levels[0]));
+    if (song == null) {
+        throw new Exception("No chart with an Easy level was available for level grouping canary.");
+    }
+
+    string expectedBucket = MajdataQolSongListMod.Core.LevelBucketizer.Bucketize(song.Levels[0]);
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList != null) {
+        coverListType.GetField("selectedDifficulty").SetValue(coverList, 0);
+    }
+
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "DifficultyLevel" });
+    return new { ok = true, hash = song.Hash, title = song.Title, expectedBucket = expectedBucket, error = "" };
+    } catch (Exception ex) {
+        return new { ok = false, hash = "", title = "", expectedBucket = "", error = ex.ToString() };
+    }
+})()
+"@
+$levelGrouping = $levelGroupingResult.result.properties
+if (-not $levelGrouping.ok) {
+    throw "Smoke failed: could not prepare level grouping canary. $($levelGrouping.error)"
+}
+
+$levelBucketObserved = $false
+$deadline = (Get-Date).AddSeconds(30)
+do {
+    Start-Sleep -Seconds 1
+    $bucketResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    string expectedBucket = "$($levelGrouping.expectedBucket)";
+    string hash = "$($levelGrouping.hash)";
+    var bucket = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == expectedBucket);
+    return new {
+        ok = true,
+        found = bucket != null,
+        containsKnownChart = bucket != null && bucket.ToArray().Any(s => s.Hash == hash),
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, found = false, containsKnownChart = false, error = ex.ToString() };
+    }
+})()
+"@
+    $bucket = $bucketResult.result.properties
+    if (-not $bucket.ok) {
+        throw "Smoke failed: level bucket observation failed. $($bucket.error)"
+    }
+    if ($bucket.found -and $bucket.containsKnownChart) {
+        $levelBucketObserved = $true
+        break
+    }
+} while ((Get-Date) -lt $deadline)
+
+if (-not $levelBucketObserved) {
+    throw "Smoke failed: level grouping did not place known chart '$($levelGrouping.title)' into expected bucket '$($levelGrouping.expectedBucket)'."
+}
+
+$hydrationCanaryResult = Invoke-GameEval @"
+new Func<object>(() => {
+    var scheduler = new MajdataQolSongListMod.Core.HydrationScheduler();
+    return new {
+        gameplayAllowed = scheduler.AllowsHydration(MajdataQolSongListMod.Core.HydrationSceneState.Gameplay),
+        practiceAllowed = scheduler.AllowsHydration(MajdataQolSongListMod.Core.HydrationSceneState.Practice),
+        listAllowed = scheduler.AllowsHydration(MajdataQolSongListMod.Core.HydrationSceneState.List)
+    };
+})()
+"@
+$hydrationCanary = $hydrationCanaryResult.result.properties
+if ($hydrationCanary.gameplayAllowed -or $hydrationCanary.practiceAllowed -or -not $hydrationCanary.listAllowed) {
+    throw "Smoke failed: hydration pause/resume policy was wrong. gameplayAllowed=$($hydrationCanary.gameplayAllowed) practiceAllowed=$($hydrationCanary.practiceAllowed) listAllowed=$($hydrationCanary.listAllowed)"
+}
+
+$cacheCanaryResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    string root = System.IO.Path.Combine(System.Environment.CurrentDirectory, "UserData", "QolSmokeCache");
+    if (System.IO.Directory.Exists(root)) {
+        System.IO.Directory.Delete(root, true);
+    }
+
+    var store = new MajdataQolSongListMod.Core.HydrationStore(root);
+    store.Write(new MajdataQolSongListMod.Core.HydrationCacheValue("smoke/hash", MajdataQolSongListMod.Core.HydrationDataKind.Bpm, "120BPM", new DateTimeOffset(DateTime.UtcNow)));
+    string expectedRoot = System.IO.Path.Combine(root, MajdataQolSongListMod.Core.HydrationStore.ModCacheDirectoryName);
+    string[] files = System.IO.Directory.GetFiles(expectedRoot);
+    return new {
+        expectedRoot = expectedRoot,
+        fileCount = files.Length,
+        allUnderModRoot = files.All(path => path.StartsWith(expectedRoot, StringComparison.OrdinalIgnoreCase)),
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { expectedRoot = "", fileCount = 0, allUnderModRoot = false, error = ex.ToString() };
+    }
+})()
+"@
+$cacheCanary = $cacheCanaryResult.result.properties
+if (-not $cacheCanary.allUnderModRoot -or $cacheCanary.fileCount -lt 1) {
+    throw "Smoke failed: cache files were not confined to the mod cache root. Root: $($cacheCanary.expectedRoot) Count: $($cacheCanary.fileCount) Error=$($cacheCanary.error)"
+}
+
+Invoke-GameEval @"
+new Func<object>(() => {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "DifficultyBracket" });
+    return new { reset = true };
+})()
+"@ | Out-Null
+
+Start-Sleep -Seconds 1
+
+$enterGameResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    var collections = MajdataPlay.SongStorage.Collections;
+    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name != "Random Recommended");
+    if (index < 0) {
+        throw new Exception("No nonempty collection was available for gameplay canary.");
+    }
+
+    MajdataPlay.SongStorage.CollectionIndex = index;
+    collections[index].Index = 0;
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { 0 });
+    }
+
+    Type listManagerType = Type.GetType("MajdataPlay.Scenes.List.ListManager, Assembly-CSharp", true);
+    object listManager = UnityEngine.Resources.FindObjectsOfTypeAll(listManagerType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (listManager == null) {
+        throw new Exception("Active ListManager was not found.");
+    }
+
+    listManagerType.GetMethod("EnterGame", Flags).Invoke(listManager, new object[0]);
+    return new { requested = true, collection = collections[index].Name, song = collections[index].Current.Title, error = "" };
+    } catch (Exception ex) {
+        return new { requested = false, collection = "", song = "", error = ex.ToString() };
+    }
+})()
+"@
+$enterGame = $enterGameResult.result.properties
+if (-not $enterGame.requested) {
+    throw "Smoke failed: could not request list-to-gameplay flow. $($enterGame.error)"
+}
+
+Start-Sleep -Seconds 5
+
+$gameplayCanaryResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+    return new {
+        scene = scene,
+        enteredGame = scene == "Game",
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name, enteredGame = false, error = ex.ToString() };
+    }
+})()
+"@
+$gameplayCanary = $gameplayCanaryResult.result.properties
+if (-not $gameplayCanary.enteredGame) {
+    throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
+}
+
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."

@@ -14,3 +14,10 @@
 - Added a right-side upper-screen status overlay with dynamic width, idle hiding, diagnostic hydration status, and persistent `Random Recommended` refresh instruction.
 - Extended the live smoke canary to verify the metadata line, list UI preservation, hydration status visibility/idle hide, and `Random Recommended` refresh status.
 - Verification: `test-unit.ps1` passed 96/96, `build.ps1` passed through smoke install, and `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T13:51:22+09:00 - Issue 12 integration canaries and completion audit
+
+- Extended `test-smoke.ps1` to verify default folder behavior, level grouping for a known chart bucket, hydration gameplay/practice pause policy, mod-owned cache writes, and list-to-gameplay entry.
+- Fixed two Majdata runtime compatibility issues discovered by the smoke canary: `LevelBucketizer` no longer calls Mono-missing `Math.Floor(decimal)`, and `HydrationStore` no longer uses Mono-missing `File.WriteAllLines(string,string[])`.
+- Added `.scratch/majdata-qol-song-list-mod/completion-audit.md` mapping PRD/issue requirements to current evidence and documented residual limitations.
+- Verification: `test-unit.ps1` passed 96/96, `build.ps1` passed through smoke install, and the expanded `test-smoke.ps1` passed against MajdataPlay.

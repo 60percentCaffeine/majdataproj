@@ -29,7 +29,7 @@ namespace MajdataQolSongListMod.Core
                 return Other;
             }
 
-            int floor = (int)Math.Floor(value);
+            int floor = (int)value;
             if (hasPlus)
             {
                 return floor.ToString(CultureInfo.InvariantCulture) + "+";
