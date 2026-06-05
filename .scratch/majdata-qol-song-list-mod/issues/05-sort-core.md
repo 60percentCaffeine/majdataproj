@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Sort core
 
@@ -19,3 +19,7 @@ Implement pure sorting for existing Majdata modes plus artist, play count, BPM, 
 ## Blocked by
 
 - 03-level-difficulty-and-grouping-core
+
+## Comments
+
+- 2026-06-05: Implemented `BpmFacet`, `CatalogSortMode`, `CatalogSortRequest`, and `CatalogSorter`. Sorting now covers UI-facing modes plus internal DX score sorting, with deterministic title/hash tie-breakers and known-before-unknown behavior for progress-style sorts. Verification: `test-unit.ps1` passed 52/52 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.

@@ -28,6 +28,52 @@ namespace MajdataQolSongListMod.Core
         Failed
     }
 
+    public sealed class BpmFacet
+    {
+        public BpmFacet(decimal? minimum, decimal? maximum, HydrationState state)
+        {
+            Minimum = minimum;
+            Maximum = maximum;
+            State = state;
+        }
+
+        public decimal? Minimum { get; private set; }
+
+        public decimal? Maximum { get; private set; }
+
+        public HydrationState State { get; private set; }
+
+        public bool HasKnownValue
+        {
+            get { return Minimum.HasValue && Maximum.HasValue; }
+        }
+
+        public decimal? SortValue
+        {
+            get { return HasKnownValue ? Minimum.Value : (decimal?)null; }
+        }
+
+        public static BpmFacet Unknown()
+        {
+            return new BpmFacet(null, null, HydrationState.Unknown);
+        }
+
+        public static BpmFacet Pending()
+        {
+            return new BpmFacet(null, null, HydrationState.Pending);
+        }
+
+        public static BpmFacet Known(decimal bpm)
+        {
+            return new BpmFacet(bpm, bpm, HydrationState.Fresh);
+        }
+
+        public static BpmFacet KnownRange(decimal minimum, decimal maximum)
+        {
+            return new BpmFacet(minimum, maximum, HydrationState.Fresh);
+        }
+    }
+
     public sealed class CatalogLevel
     {
         public CatalogLevel(int difficultyIndex, string difficultyName, string value)
@@ -129,6 +175,7 @@ namespace MajdataQolSongListMod.Core
             ScoreFacet score,
             InteractionFacet interaction,
             IEnumerable<CollectionMembership> collectionMemberships,
+            BpmFacet bpm,
             HydrationState hydrationState)
         {
             Source = source;
@@ -144,6 +191,7 @@ namespace MajdataQolSongListMod.Core
             Score = score ?? ScoreFacet.Empty();
             Interaction = interaction ?? InteractionFacet.Empty();
             CollectionMemberships = (collectionMemberships ?? Enumerable.Empty<CollectionMembership>()).ToArray();
+            Bpm = bpm ?? BpmFacet.Unknown();
             HydrationState = hydrationState;
         }
 
@@ -173,6 +221,8 @@ namespace MajdataQolSongListMod.Core
 
         public IReadOnlyList<CollectionMembership> CollectionMemberships { get; private set; }
 
+        public BpmFacet Bpm { get; private set; }
+
         public HydrationState HydrationState { get; private set; }
 
         public static CatalogInput Local(
@@ -184,7 +234,8 @@ namespace MajdataQolSongListMod.Core
             IEnumerable<string> designers,
             DateTimeOffset? timestamp,
             ScoreFacet score,
-            HydrationState hydrationState)
+            HydrationState hydrationState,
+            BpmFacet bpm = null)
         {
             return new CatalogInput(
                 CatalogSource.Local,
@@ -200,6 +251,7 @@ namespace MajdataQolSongListMod.Core
                 score,
                 null,
                 null,
+                bpm,
                 hydrationState);
         }
 
@@ -214,7 +266,8 @@ namespace MajdataQolSongListMod.Core
             DateTimeOffset? timestamp,
             InteractionFacet interaction,
             IEnumerable<CollectionMembership> collectionMemberships,
-            HydrationState hydrationState)
+            HydrationState hydrationState,
+            BpmFacet bpm = null)
         {
             return new CatalogInput(
                 CatalogSource.Online,
@@ -230,6 +283,7 @@ namespace MajdataQolSongListMod.Core
                 null,
                 interaction,
                 collectionMemberships,
+                bpm,
                 hydrationState);
         }
     }
@@ -251,6 +305,7 @@ namespace MajdataQolSongListMod.Core
             ScoreFacet score,
             InteractionFacet interaction,
             IEnumerable<CollectionMembership> collectionMemberships,
+            BpmFacet bpm,
             HydrationState hydrationState)
         {
             Hash = hash;
@@ -267,6 +322,7 @@ namespace MajdataQolSongListMod.Core
             Score = score ?? ScoreFacet.Empty();
             Interaction = interaction ?? InteractionFacet.Empty();
             CollectionMemberships = (collectionMemberships ?? Enumerable.Empty<CollectionMembership>()).ToArray();
+            Bpm = bpm ?? BpmFacet.Unknown();
             HydrationState = hydrationState;
         }
 
@@ -297,6 +353,8 @@ namespace MajdataQolSongListMod.Core
         public InteractionFacet Interaction { get; private set; }
 
         public IReadOnlyList<CollectionMembership> CollectionMemberships { get; private set; }
+
+        public BpmFacet Bpm { get; private set; }
 
         public HydrationState HydrationState { get; private set; }
 
@@ -420,6 +478,7 @@ namespace MajdataQolSongListMod.Core
                     _local != null ? _local.Score : display.Score,
                     _online != null ? _online.Interaction : display.Interaction,
                     MergeMemberships(),
+                    FirstBpm(_local, _online, display),
                     MostAdvancedHydrationState());
             }
 
@@ -500,6 +559,31 @@ namespace MajdataQolSongListMod.Core
                 }
 
                 return fallback.Levels;
+            }
+
+            private static BpmFacet FirstBpm(CatalogInput local, CatalogInput online, CatalogInput fallback)
+            {
+                if (local != null && local.Bpm.HasKnownValue)
+                {
+                    return local.Bpm;
+                }
+
+                if (online != null && online.Bpm.HasKnownValue)
+                {
+                    return online.Bpm;
+                }
+
+                if (local != null && local.Bpm.State != HydrationState.Unknown)
+                {
+                    return local.Bpm;
+                }
+
+                if (online != null && online.Bpm.State != HydrationState.Unknown)
+                {
+                    return online.Bpm;
+                }
+
+                return fallback.Bpm;
             }
 
             private static DateTimeOffset? FirstValue(params DateTimeOffset?[] values)
