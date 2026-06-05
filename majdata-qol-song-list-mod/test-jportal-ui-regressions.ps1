@@ -46,6 +46,17 @@ function Convert-ToGamePathLiteral {
     return $Path.Replace("\", "\\")
 }
 
+function Convert-ToCSharpStringLiteral {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    $escaped = $Value.Replace('\', '\\').Replace('"', '\"').Replace("`r", '\r').Replace("`n", '\n').Replace("`t", '\t')
+    return '"' + $escaped + '"'
+}
+
 function Wait-ForScreenshotFile {
     param([string]$Path)
 
@@ -820,6 +831,172 @@ function Add-Case {
     }) | Out-Null
 }
 
+function Invoke-QolFeatureProbe {
+    param(
+        [string]$Feature,
+        [string]$Grouping,
+        [string]$Sorting,
+        [string]$DifficultyFilter,
+        [string]$DownloadedFilter,
+        [string]$TargetCollection,
+        [bool]$InstallWebsiteCollection = $false
+    )
+
+    $featureLiteral = Convert-ToCSharpStringLiteral $Feature
+    $groupingLiteral = Convert-ToCSharpStringLiteral $Grouping
+    $sortingLiteral = Convert-ToCSharpStringLiteral $Sorting
+    $difficultyFilterLiteral = Convert-ToCSharpStringLiteral $DifficultyFilter
+    $downloadedFilterLiteral = Convert-ToCSharpStringLiteral $DownloadedFilter
+    $targetCollectionLiteral = Convert-ToCSharpStringLiteral $TargetCollection
+    $installWebsiteLiteral = if ($InstallWebsiteCollection) { "true" } else { "false" }
+
+    Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+        const System.Reflection.BindingFlags Flags =
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Instance;
+
+        Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", false);
+        if (bridgeType == null || bridgeType.GetProperty("Active").GetValue(null, null) == null) {
+            return new { ok = false, skipped = true, feature = $featureLiteral, error = "QoL bridge is not loaded." };
+        }
+
+        string targetCollection = $targetCollectionLiteral;
+        if ($installWebsiteLiteral) {
+            var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "All");
+            var rows = all == null
+                ? new MajdataPlay.ISongDetail[0]
+                : all.ToArray().Where(song => song != null && !song.IsOnline && !string.IsNullOrWhiteSpace(song.Hash)).Take(3).ToArray();
+            if (rows.Length < 2) {
+                return new { ok = false, skipped = false, feature = $featureLiteral, error = "Need at least two local rows for website collection probe." };
+            }
+
+            string hashes = string.Join("|", rows.Select(song => song.Hash).ToArray());
+            bridgeType.GetMethod("InstallWebsiteCollectionForDiagnostics").Invoke(null, new object[] { targetCollection, hashes, rows.Length });
+        }
+
+        bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { $groupingLiteral });
+        bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { $sortingLiteral });
+        bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { $difficultyFilterLiteral });
+        bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { $downloadedFilterLiteral });
+        bool applied = (bool)bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+        if (!applied) {
+            return new { ok = false, skipped = false, feature = $featureLiteral, error = "ApplySettingsForDiagnostics returned false." };
+        }
+
+        Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+        object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+            .OfType<UnityEngine.Component>()
+            .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+        if (coverList == null) {
+            return new { ok = false, skipped = false, feature = $featureLiteral, error = "CoverListDisplayer not found." };
+        }
+
+        Action fixedTicks = () => {
+            var fixedUpdate = coverListType.GetMethod("FixedUpdate", Flags);
+            if (fixedUpdate != null) {
+                for (int i = 0; i < 60; i++) fixedUpdate.Invoke(coverList, new object[0]);
+            }
+        };
+
+        var collections = MajdataPlay.SongStorage.Collections;
+        int targetIndex = Array.FindIndex(collections, c => c != null && c.Count > 0 && string.Equals(c.Name, targetCollection, StringComparison.OrdinalIgnoreCase));
+        if (targetIndex < 0) {
+            targetIndex = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name != "MyFavorites");
+        }
+        if (targetIndex < 0) {
+            return new { ok = false, skipped = false, feature = $featureLiteral, error = "No nonempty target collection was available." };
+        }
+
+        MajdataPlay.SongStorage.CollectionIndex = targetIndex;
+        collections[targetIndex].Index = 0;
+        coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+        var slide = coverListType.GetMethod("SlideListInternal", Flags);
+        if (slide != null) {
+            slide.Invoke(coverList, new object[] { targetIndex });
+        }
+        fixedTicks();
+        coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+        coverListType.GetMethod("SlideToDifficulty", Flags).Invoke(coverList, new object[] { 0 });
+        if (slide != null) {
+            slide.Invoke(coverList, new object[] { 0 });
+        }
+        fixedTicks();
+
+        var selected = coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
+        return new {
+            ok = true,
+            skipped = false,
+            feature = $featureLiteral,
+            collection = collections[targetIndex].Name,
+            collectionIndex = targetIndex,
+            collectionCount = collections[targetIndex].Count,
+            selectedTitle = selected == null ? "" : selected.Title,
+            selectedHash = selected == null ? "" : selected.Hash,
+            error = ""
+        };
+    } catch (Exception ex) {
+        return new { ok = false, skipped = false, feature = $featureLiteral, error = ex.ToString() };
+    }
+})()
+"@
+}
+
+function Add-QolFeatureProbeCases {
+    param(
+        [System.Collections.Generic.List[object]]$Cases,
+        [System.Collections.Generic.List[object]]$Screenshots,
+        [string]$Label,
+        [object]$ReferenceState
+    )
+
+    $probes = @(
+        [pscustomobject]@{ Feature = "sorting title"; Grouping = "Default"; Sorting = "Title"; DifficultyFilter = "No"; DownloadedFilter = "Mixed"; Target = "JPORTAL"; Screenshot = "07-feature-sorting-title"; InstallWebsite = $false },
+        [pscustomobject]@{ Feature = "grouping difficulty bracket"; Grouping = "DifficultyBracket"; Sorting = "Default"; DifficultyFilter = "No"; DownloadedFilter = "Mixed"; Target = "Master"; Screenshot = "08-feature-grouping-difficulty-bracket"; InstallWebsite = $false },
+        [pscustomobject]@{ Feature = "difficulty filter more than one"; Grouping = "Default"; Sorting = "Default"; DifficultyFilter = "MoreThan1"; DownloadedFilter = "Mixed"; Target = "All"; Screenshot = "09-feature-difficulty-filter-more-than-one"; InstallWebsite = $false },
+        [pscustomobject]@{ Feature = "downloaded songs filter"; Grouping = "Default"; Sorting = "Default"; DifficultyFilter = "No"; DownloadedFilter = "DownloadedOnly"; Target = "JPORTAL"; Screenshot = "10-feature-downloaded-filter"; InstallWebsite = $false },
+        [pscustomobject]@{ Feature = "random recommended folder"; Grouping = "Default"; Sorting = "Default"; DifficultyFilter = "No"; DownloadedFilter = "Mixed"; Target = "Random Recommended"; Screenshot = "11-feature-random-recommended"; InstallWebsite = $false },
+        [pscustomobject]@{ Feature = "website collection"; Grouping = "Default"; Sorting = "Default"; DifficultyFilter = "No"; DownloadedFilter = "Mixed"; Target = "QoL Feature Website"; Screenshot = "12-feature-website-collection"; InstallWebsite = $true }
+    )
+
+    if (-not $ReferenceState.upperScreen.qolLoaded) {
+        foreach ($probe in $probes) {
+            Add-Case $Cases "feature probe $($probe.Feature) keeps visible state coherent" $true "skipped: QoL bridge is not loaded in $Label."
+        }
+        return
+    }
+
+    foreach ($probe in $probes) {
+        $action = Invoke-QolFeatureProbe -Feature $probe.Feature -Grouping $probe.Grouping -Sorting $probe.Sorting -DifficultyFilter $probe.DifficultyFilter -DownloadedFilter $probe.DownloadedFilter -TargetCollection $probe.Target -InstallWebsiteCollection:$probe.InstallWebsite
+        Start-Sleep -Seconds 5
+        $state = Read-VisibleGameState
+        $screenshots.Add((Capture-JportalScreenshot $Label $probe.Screenshot "QoL feature probe: $($probe.Feature)." $state)) | Out-Null
+
+        $actionOk = [bool]$action.result.properties.ok
+        $selectedSong = $state.songSelect.selected.song
+        $carousel = $state.songSelect.carousel
+        $selectedElement = $carousel.selectedElement
+        $bindingSong = $selectedElement.binding.song
+        $displaySong = $selectedElement.display.song
+        $diagnostics = $carousel.diagnostics
+        Add-Case $Cases "feature probe $($probe.Feature) keeps visible state coherent" (
+            $actionOk -and
+            $state.ok -and
+            $state.screen.selecting -eq "songs" -and
+            $state.songSelect.center.title -eq $selectedSong.title -and
+            $state.songSelect.rightInfo.title -eq $selectedSong.title -and
+            $selectedSong.hash -eq $bindingSong.hash -and
+            $selectedSong.hash -eq $displaySong.hash -and
+            $diagnostics.orphanedActiveSmallCovers -eq 0 -and
+            $diagnostics.duplicateAllActiveBoundHashes -eq 0 -and
+            $diagnostics.staleAllActiveSprites -eq 0 -and
+            $diagnostics.duplicateAllActiveSpriteDifferentSongs -eq 0
+        ) "feature=$($probe.Feature); actionOk=$actionOk; collection=$($action.result.properties.collection); selected=$($selectedSong.title)/$($selectedSong.hash); center=$($state.songSelect.center.title); right=$($state.songSelect.rightInfo.title); binding=$($bindingSong.title)/$($bindingSong.hash); display=$($displaySong.title)/$($displaySong.hash); orphaned=$($diagnostics.orphanedActiveSmallCovers); duplicateAllBound=$($diagnostics.duplicateAllActiveBoundHashes); staleAll=$($diagnostics.staleAllActiveSprites); duplicateAllSprites=$($diagnostics.duplicateAllActiveSpriteDifferentSongs); error=$($action.result.properties.error)"
+    }
+}
+
 function Run-JportalUiSnapshot {
     param([string]$Label)
 
@@ -855,6 +1032,13 @@ function Run-JportalUiSnapshot {
         $afterDifficultySelectedSong.hash -eq $afterDifficultySelectedElement.binding.song.hash -and
         $afterDifficultySelectedSong.hash -eq $afterDifficultyDisplaySong.hash
     ) "selected=$($afterDifficultySelectedSong.title)/$($afterDifficultySelectedSong.hash); centerTitle=$($afterDifficulty.songSelect.center.title); centerImageMatchesSelected=$($afterDifficulty.songSelect.center.image.matchesSelectedSongCachedCover); carouselIndex=$($afterDifficultyCarousel.selectedIndex); binding=$($afterDifficultySelectedElement.binding.song.title)/$($afterDifficultySelectedElement.binding.song.hash); display=$($afterDifficultyDisplaySong.title)/$($afterDifficultyDisplaySong.hash); visibleSongs=$($afterDifficultyCarousel.debug.visibleSongRows)"
+    Add-Case $cases "right song info matches selected carousel song after difficulty change" (
+        $afterDifficulty.ok -and
+        $afterDifficulty.screen.selecting -eq "songs" -and
+        $afterDifficulty.songSelect.rightInfo.title -eq $afterDifficultySelectedSong.title -and
+        $afterDifficulty.songSelect.rightInfo.title -eq $afterDifficultyDisplaySong.title -and
+        $afterDifficulty.songSelect.center.title -eq $afterDifficulty.songSelect.rightInfo.title
+    ) "rightTitle=$($afterDifficulty.songSelect.rightInfo.title); selected=$($afterDifficultySelectedSong.title)/$($afterDifficultySelectedSong.hash); centerTitle=$($afterDifficulty.songSelect.center.title); carouselDisplay=$($afterDifficultyDisplaySong.title)/$($afterDifficultyDisplaySong.hash)"
     $scrollAfterDifficulty = Invoke-JportalAction -Action Scroll
     Start-Sleep -Seconds 8
     $afterDifficultyScroll = Read-VisibleGameState
@@ -874,6 +1058,13 @@ function Run-JportalUiSnapshot {
         $afterDifficultyScrollSelectedSong.hash -eq $afterDifficultyScrollSelectedElement.binding.song.hash -and
         $afterDifficultyScrollSelectedSong.hash -eq $afterDifficultyScrollDisplaySong.hash
     ) "selected=$($afterDifficultyScrollSelectedSong.title)/$($afterDifficultyScrollSelectedSong.hash); centerTitle=$($afterDifficultyScroll.songSelect.center.title); centerImageMatchesSelected=$($afterDifficultyScroll.songSelect.center.image.matchesSelectedSongCachedCover); carouselIndex=$($afterDifficultyScrollCarousel.selectedIndex); binding=$($afterDifficultyScrollSelectedElement.binding.song.title)/$($afterDifficultyScrollSelectedElement.binding.song.hash); display=$($afterDifficultyScrollDisplaySong.title)/$($afterDifficultyScrollDisplaySong.hash); visibleSongs=$($afterDifficultyScrollCarousel.debug.visibleSongRows)"
+    Add-Case $cases "right song info matches selected carousel song after difficulty change and scroll" (
+        $afterDifficultyScroll.ok -and
+        $afterDifficultyScroll.screen.selecting -eq "songs" -and
+        $afterDifficultyScroll.songSelect.rightInfo.title -eq $afterDifficultyScrollSelectedSong.title -and
+        $afterDifficultyScroll.songSelect.rightInfo.title -eq $afterDifficultyScrollDisplaySong.title -and
+        $afterDifficultyScroll.songSelect.center.title -eq $afterDifficultyScroll.songSelect.rightInfo.title
+    ) "rightTitle=$($afterDifficultyScroll.songSelect.rightInfo.title); selected=$($afterDifficultyScrollSelectedSong.title)/$($afterDifficultyScrollSelectedSong.hash); centerTitle=$($afterDifficultyScroll.songSelect.center.title); carouselDisplay=$($afterDifficultyScrollDisplaySong.title)/$($afterDifficultyScrollDisplaySong.hash)"
     Add-Case $cases "visible carousel covers are not stale or duplicated after difficulty change and scroll" (
         $afterDifficultyScroll.ok -and $difficultyOk -and $scrollAfterDifficultyOk -and
         $afterDifficultyScroll.screen.selecting -eq "songs" -and
@@ -915,6 +1106,8 @@ function Run-JportalUiSnapshot {
         $rankSelectedSong.hash -eq $rankFocusedDisplaySong.hash -and
         $rankCenter.title -eq $rankSelectedSong.title
     ) "expectedBasicIndex=$expectedBasicIndex; selected=$($rankSelectedSong.title)/$($rankSelectedSong.hash); selectedIndex=$($rankCarousel.selectedIndex); focusedBinding=$($rankFocusedBindingSong.title)/$($rankFocusedBindingSong.hash); focusedDisplay=$($rankFocusedDisplaySong.title)/$($rankFocusedDisplaySong.hash); centerTitle=$($rankCenter.title); selecting=$($rankState.screen.selecting); difficulty=$($rankState.upperScreen.selectedDifficulty); prepareOk=$rankPrepareOk; openOk=$rankOpenOk; difficultyOk=$rankDifficultyOk; visibleSongs=$($rankCarousel.debug.visibleSongRows)"
+
+    Add-QolFeatureProbeCases -Cases $cases -Screenshots $screenshots -Label $Label -ReferenceState $rankState
 
     return [pscustomobject]@{
         Label = $Label
