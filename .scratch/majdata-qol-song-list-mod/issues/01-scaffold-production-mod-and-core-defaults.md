@@ -8,12 +8,12 @@ Create a production `majdata-qol-song-list-mod` MelonLoader mod with a Unity-fre
 
 ## Acceptance criteria
 
-- [ ] The repo has a buildable production mod project, distinct from prototype scratch scripts.
-- [ ] The mod installs into the MajdataPlay `Mods` directory with its core support assembly under a mod-owned library folder.
-- [ ] Startup logs prove the mod and core defaults load without covering or replacing the game's UI.
-- [ ] The pure core exposes map-list settings defaults: grouping `Default`, sorting `Default`, difficulty filter `No`, downloaded songs filter `Mixed`.
-- [ ] Unit tests cover the defaults and supported option sets, including that `Version` is not a grouping mode and `All` is not its own grouping mode.
-- [ ] Build/install scripts and a unit test script are present and pass.
+- [x] The repo has a buildable production mod project, distinct from prototype scratch scripts.
+- [x] The mod installs into the MajdataPlay `Mods` directory with its core support assembly under a mod-owned library folder.
+- [x] Startup logs prove the mod and core defaults load without covering or replacing the game's UI.
+- [x] The pure core exposes map-list settings defaults: grouping `Default`, sorting `Default`, difficulty filter `No`, downloaded songs filter `Mixed`.
+- [x] Unit tests cover the defaults and supported option sets, including that `Version` is not a grouping mode and `All` is not its own grouping mode.
+- [x] Build/install scripts and a unit test script are present and pass.
 
 ## Blocked by
 

@@ -8,12 +8,12 @@ Implement `ChartDataHydrator` for BPM calculation from `maidata` and `OnlineStat
 
 ## Acceptance criteria
 
-- [ ] Local `maidata` parsing calculates BPM values compatible with the game's chart analysis approach.
-- [ ] Online BPM hydration fetches/parses `maidata` only when queued.
-- [ ] BPM format supports single values, ranges, pending, and unknown.
-- [ ] Online interaction stats use 24-hour stale-while-revalidate semantics.
-- [ ] Online aggregate play count can be fetched from interaction endpoints or degrades as unknown.
-- [ ] Tests cover fixed BPM, varying BPM, malformed `maidata`, pending/unknown display, and stale interaction stats.
+- [x] Local `maidata` parsing calculates BPM values compatible with the game's chart analysis approach.
+- [x] Online BPM hydration fetches/parses `maidata` only when queued.
+- [x] BPM format supports single values, ranges, pending, and unknown.
+- [x] Online interaction stats use 24-hour stale-while-revalidate semantics.
+- [x] Online aggregate play count can be fetched from interaction endpoints or degrades as unknown.
+- [x] Tests cover fixed BPM, varying BPM, malformed `maidata`, pending/unknown display, and stale interaction stats.
 
 ## Blocked by
 

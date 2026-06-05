@@ -8,13 +8,13 @@ Implement pure sorting for existing Majdata modes plus artist, play count, BPM, 
 
 ## Acceptance criteria
 
-- [ ] Sort option set matches the UI proposal and omits unsupported Sinmai-only modes.
-- [ ] Artist/title/release sorting are deterministic with stable tie-breakers.
-- [ ] Local play count sorts immediately when available.
-- [ ] Unknown online play count is distinguishable from confirmed zero.
-- [ ] BPM sorting uses known values and places unknown/pending after known values.
-- [ ] AP/FC and DX score sorts degrade cleanly when no score data exists.
-- [ ] Unit tests cover known, unknown, stale, and zero values.
+- [x] Sort option set matches the UI proposal and omits unsupported Sinmai-only modes.
+- [x] Artist/title/release sorting are deterministic with stable tie-breakers.
+- [x] Local play count sorts immediately when available.
+- [x] Unknown online play count is distinguishable from confirmed zero.
+- [x] BPM sorting uses known values and places unknown/pending after known values.
+- [x] AP/FC and DX score sorts degrade cleanly when no score data exists.
+- [x] Unit tests cover known, unknown, stale, and zero values.
 
 ## Blocked by
 

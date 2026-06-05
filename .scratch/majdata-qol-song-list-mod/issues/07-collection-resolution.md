@@ -8,11 +8,11 @@ Support website collection summaries and hash-list contents as virtual folders. 
 
 ## Acceptance criteria
 
-- [ ] User-owned and subscribed/favorited collection DTOs convert into collection summaries.
-- [ ] Collection hash contents resolve against local-only, online-only, and duplicate rows.
-- [ ] Unresolved collection entries are omitted from playable rows but reflected in resolved versus total counts.
-- [ ] Online-disabled scope hides or degrades online-only collection rows cleanly.
-- [ ] Unit tests cover local-only, online-only, duplicate, unresolved, and mixed-scope cases.
+- [x] User-owned and subscribed/favorited collection DTOs convert into collection summaries.
+- [x] Collection hash contents resolve against local-only, online-only, and duplicate rows.
+- [x] Unresolved collection entries are omitted from playable rows but reflected in resolved versus total counts.
+- [x] Online-disabled scope hides or degrades online-only collection rows cleanly.
+- [x] Unit tests cover local-only, online-only, duplicate, unresolved, and mixed-scope cases.
 
 ## Blocked by
 

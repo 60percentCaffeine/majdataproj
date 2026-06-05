@@ -8,12 +8,12 @@ Add `MajdataNetAdapter` for public chart-list DTO conversion and implement rando
 
 ## Acceptance criteria
 
-- [ ] Chart-list JSON converts into catalog-compatible online rows.
-- [ ] Random recommendations can be built from unauthenticated chart-list data.
-- [ ] Recommendation batches are deterministic for a supplied seed but varied for different seeds.
-- [ ] Network failures are non-fatal and return a recoverable result.
-- [ ] Configured local fallback produces recommendations from local catalog rows.
-- [ ] Unit tests use representative JSON fixtures and failure cases.
+- [x] Chart-list JSON converts into catalog-compatible online rows.
+- [x] Random recommendations can be built from unauthenticated chart-list data.
+- [x] Recommendation batches are deterministic for a supplied seed but varied for different seeds.
+- [x] Network failures are non-fatal and return a recoverable result.
+- [x] Configured local fallback produces recommendations from local catalog rows.
+- [x] Unit tests use representative JSON fixtures and failure cases.
 
 ## Blocked by
 

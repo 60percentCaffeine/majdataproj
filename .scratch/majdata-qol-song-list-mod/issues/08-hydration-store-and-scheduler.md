@@ -8,14 +8,14 @@ Add persistent cache storage and hydration scheduling for BPM and interaction st
 
 ## Acceptance criteria
 
-- [ ] Cache data is stored under the mod's own cache location and survives restart in tests.
-- [ ] Fresh values are used without refresh; stale values are used while refresh is queued.
-- [ ] Missing values queue ahead of stale values.
-- [ ] Offline rows queue ahead of online rows.
-- [ ] Special online rows queue ahead of normal online rows.
-- [ ] Visible and nearby rows queue ahead of non-visible rows.
-- [ ] Gameplay/practice scene state blocks hydration; menu/list/setting/title states allow it.
-- [ ] Network hydration failures are logged/recoverable and do not delete stale data.
+- [x] Cache data is stored under the mod's own cache location and survives restart in tests.
+- [x] Fresh values are used without refresh; stale values are used while refresh is queued.
+- [x] Missing values queue ahead of stale values.
+- [x] Offline rows queue ahead of online rows.
+- [x] Special online rows queue ahead of normal online rows.
+- [x] Visible and nearby rows queue ahead of non-visible rows.
+- [x] Gameplay/practice scene state blocks hydration; menu/list/setting/title states allow it.
+- [x] Network hydration failures are logged/recoverable and do not delete stale data.
 
 ## Blocked by
 

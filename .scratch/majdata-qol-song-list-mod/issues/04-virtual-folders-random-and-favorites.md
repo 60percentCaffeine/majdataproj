@@ -8,11 +8,11 @@ Add `VirtualCollectionFactory` so `Random Recommended` is always available along
 
 ## Acceptance criteria
 
-- [ ] `Random Recommended` is inserted for default folder browsing and alternate grouping modes.
-- [ ] `MyFavorites` remains available in every grouping mode.
-- [ ] `All` remains part of default folder behavior and is not exposed as a grouping mode.
-- [ ] `Random Recommended` exposes tile text as `Random\nRecommended` and selected info text as `Random Recommended`.
-- [ ] Tests cover insertion order and availability across all supported grouping modes.
+- [x] `Random Recommended` is inserted for default folder browsing and alternate grouping modes.
+- [x] `MyFavorites` remains available in every grouping mode.
+- [x] `All` remains part of default folder behavior and is not exposed as a grouping mode.
+- [x] `Random Recommended` exposes tile text as `Random\nRecommended` and selected info text as `Random Recommended`.
+- [x] Tests cover insertion order and availability across all supported grouping modes.
 
 ## Blocked by
 
