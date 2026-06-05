@@ -5,6 +5,9 @@ $GameRoot = Join-Path $ProjectRoot "Majdata Hub\game"
 $HookPort = 17444
 $HookUrl = "http://127.0.0.1:$HookPort/eval-isolated"
 
+Get-Process -Name "MajdataPlay" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+
 function Invoke-GameEval {
     param([string]$Code)
 
