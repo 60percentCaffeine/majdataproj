@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Hydration store and scheduler
 
@@ -20,3 +20,7 @@ Add persistent cache storage and hydration scheduling for BPM and interaction st
 ## Blocked by
 
 - 02-catalog-row-and-index-deduplication
+
+## Comments
+
+- 2026-06-05: Implemented `HydrationStore`, `HydrationScheduler`, `BrowsingContext`, and hydration work/cache models. Cache values are stored under a mod-owned `MajdataQolSongListMod` cache directory; fresh/stale/missing read behavior drives refresh decisions; scheduler prioritizes missing before stale, local/offline before online, special online before normal online, visible before nearby before hidden, and blocks gameplay/practice scenes. Failures are recorded recoverably without deleting stale cache data. Verification: `test-unit.ps1` passed 79/79 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.
