@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Apply live Map List sorting and filters
 
@@ -10,14 +10,18 @@ This slice should make the existing settings cards do real work in the live caro
 
 ## Acceptance criteria
 
-- [ ] Changing `Sorting` in the Map List settings changes the visible song order for at least one non-default sort mode with a deterministic in-game canary.
-- [ ] Changing `Difficulty Filter` changes the visible song set according to `No`, `>1 difficulty`, `>2 difficulties`, and `>3 difficulties` rules.
-- [ ] Changing `Downloaded Songs Filter` applies `Mixed`, `Downloaded only`, and `Online only` scope behavior where the available runtime data supports it, and degrades cleanly when online-only content is unavailable.
-- [ ] Default Folder mode still preserves the existing folder list behavior, including `All`, `MyFavorites`, and `Random Recommended`.
-- [ ] Alternate grouping modes still rebuild the folder carousel and include `Random Recommended`.
-- [ ] Existing list-to-gameplay flow remains functional after non-default sorting/filter settings are applied.
-- [ ] Unit tests and in-game canaries cover at least one representative sorting mode, each difficulty filter, downloaded/online scope behavior, and default behavior preservation.
+- [x] Changing `Sorting` in the Map List settings changes the visible song order for at least one non-default sort mode with a deterministic in-game canary.
+- [x] Changing `Difficulty Filter` changes the visible song set according to `No`, `>1 difficulty`, `>2 difficulties`, and `>3 difficulties` rules.
+- [x] Changing `Downloaded Songs Filter` applies `Mixed`, `Downloaded only`, and `Online only` scope behavior where the available runtime data supports it, and degrades cleanly when online-only content is unavailable.
+- [x] Default Folder mode still preserves the existing folder list behavior, including `All`, `MyFavorites`, and `Random Recommended`.
+- [x] Alternate grouping modes still rebuild the folder carousel and include `Random Recommended`.
+- [x] Existing list-to-gameplay flow remains functional after non-default sorting/filter settings are applied.
+- [x] Unit tests and in-game canaries cover at least one representative sorting mode, each difficulty filter, downloaded/online scope behavior, and default behavior preservation.
 
 ## Blocked by
 
 None - can start immediately
+
+## Comments
+
+- 2026-06-05: Wired live Map List sorting, difficulty-count filtering, and downloaded/online scope filtering into the runtime list adapter. Default Folder mode remains unchanged when all settings are default, but non-default settings transform visible song arrays; alternate groupings now filter/sort their source songs before materializing folders. Added diagnostic setters/apply hook and expanded `test-smoke.ps1` to prove title sorting, all difficulty filters, downloaded/online scopes, default folder preservation, alternate grouping, and list-to-gameplay flow with a non-default sort active. Verification: `test-unit.ps1` passed 96/96 and expanded `test-smoke.ps1` passed against MajdataPlay.

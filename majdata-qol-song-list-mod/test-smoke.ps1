@@ -421,6 +421,186 @@ if (-not $levelBucketObserved) {
     throw "Smoke failed: level grouping did not place known chart '$($levelGrouping.title)' into expected bucket '$($levelGrouping.expectedBucket)'."
 }
 
+$sortCanaryResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    apply();
+
+    Func<MajdataPlay.Collections.SongCollection, string> firstFive = collection =>
+        string.Join("|", collection.ToArray().Take(5).Select(song => song.Hash));
+
+    var candidate = MajdataPlay.SongStorage.Collections
+        .Where(collection => collection != null && collection.Name != "Random Recommended" && collection.Count >= 5)
+        .Select(collection => new {
+            collection,
+            original = firstFive(collection),
+            expected = string.Join("|", collection.ToArray()
+                .OrderBy(song => string.IsNullOrWhiteSpace(song.Title) ? "\uffff" : song.Title.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .Select(song => song.Hash))
+        })
+        .FirstOrDefault(item => item.original != item.expected);
+
+    if (candidate == null) {
+        throw new Exception("No collection with a title-sort-visible first page was found.");
+    }
+
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Title" });
+    apply();
+
+    var sortedCollection = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == candidate.collection.Name);
+    string observed = sortedCollection == null ? "" : firstFive(sortedCollection);
+    return new {
+        ok = true,
+        collection = candidate.collection.Name,
+        original = candidate.original,
+        expected = candidate.expected,
+        observed = observed,
+        changed = candidate.original != observed,
+        sorted = candidate.expected == observed,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, collection = "", original = "", expected = "", observed = "", changed = false, sorted = false, error = ex.ToString() };
+    }
+})()
+"@
+$sortCanary = $sortCanaryResult.result.properties
+if (-not $sortCanary.ok -or -not $sortCanary.changed -or -not $sortCanary.sorted) {
+    throw "Smoke failed: title sorting did not visibly reorder a collection. Collection=$($sortCanary.collection) Original=$($sortCanary.original) Expected=$($sortCanary.expected) Observed=$($sortCanary.observed) Error=$($sortCanary.error)"
+}
+
+$difficultyFilterResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+
+    Func<MajdataPlay.ISongDetail, int> diffCount = song => {
+        int count = 0;
+        var levels = song.Levels;
+        for (int i = 0; i < levels.Length; i++) {
+            if (!string.IsNullOrWhiteSpace(levels[i])) {
+                count++;
+            }
+        }
+        return count;
+    };
+    Func<int> allCount = () => {
+        var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == "All");
+        var rows = all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray();
+        return rows.Length;
+    };
+    Func<int, bool> allPass = minimum => {
+        var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == "All");
+        var rows = all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray();
+        return rows.All(song => diffCount(song) > minimum);
+    };
+
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    apply();
+    int noCount = allCount();
+    bool noPass = allPass(-1);
+
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "MoreThan1" });
+    apply();
+    int gt1Count = allCount();
+    bool gt1Pass = allPass(1);
+
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "MoreThan2" });
+    apply();
+    int gt2Count = allCount();
+    bool gt2Pass = allPass(2);
+
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "MoreThan3" });
+    apply();
+    int gt3Count = allCount();
+    bool gt3Pass = allPass(3);
+
+    return new {
+        ok = true,
+        noCount = noCount,
+        moreThan1Count = gt1Count,
+        moreThan2Count = gt2Count,
+        moreThan3Count = gt3Count,
+        allPass = noPass && gt1Pass && gt2Pass && gt3Pass,
+        monotonic = noCount >= gt1Count && gt1Count >= gt2Count && gt2Count >= gt3Count,
+        narrowed = noCount > gt1Count || gt1Count > gt2Count || gt2Count > gt3Count,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, noCount = 0, moreThan1Count = 0, moreThan2Count = 0, moreThan3Count = 0, allPass = false, monotonic = false, narrowed = false, error = ex.ToString() };
+    }
+})()
+"@
+$difficultyFilter = $difficultyFilterResult.result.properties
+if (-not $difficultyFilter.ok -or -not $difficultyFilter.allPass -or -not $difficultyFilter.monotonic -or -not $difficultyFilter.narrowed) {
+    throw "Smoke failed: difficulty filters did not apply. Counts No=$($difficultyFilter.noCount) >1=$($difficultyFilter.moreThan1Count) >2=$($difficultyFilter.moreThan2Count) >3=$($difficultyFilter.moreThan3Count) Error=$($difficultyFilter.error)"
+}
+
+$downloadedFilterResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+
+    Func<MajdataPlay.ISongDetail[]> allRows = () => {
+        var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(collection => collection != null && collection.Name == "All");
+        return all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray();
+    };
+
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    apply();
+    var mixedRows = allRows();
+    int mixedCount = mixedRows.Length;
+    int mixedLocalCount = mixedRows.Count(song => !song.IsOnline);
+    int mixedOnlineCount = mixedRows.Count(song => song.IsOnline);
+
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "DownloadedOnly" });
+    apply();
+    var downloadedRows = allRows();
+    int downloadedCount = downloadedRows.Length;
+    bool downloadedAllLocal = downloadedRows.All(song => !song.IsOnline);
+
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "OnlineOnly" });
+    apply();
+    var onlineRows = allRows();
+    int onlineCount = onlineRows.Length;
+    bool onlineAllOnline = onlineRows.All(song => song.IsOnline);
+
+    return new {
+        ok = true,
+        mixedCount = mixedCount,
+        mixedLocalCount = mixedLocalCount,
+        mixedOnlineCount = mixedOnlineCount,
+        downloadedCount = downloadedCount,
+        downloadedAllLocal = downloadedAllLocal,
+        onlineCount = onlineCount,
+        onlineAllOnline = onlineAllOnline,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, mixedCount = 0, mixedLocalCount = 0, mixedOnlineCount = 0, downloadedCount = 0, downloadedAllLocal = false, onlineCount = 0, onlineAllOnline = false, error = ex.ToString() };
+    }
+})()
+"@
+$downloadedFilter = $downloadedFilterResult.result.properties
+if (-not $downloadedFilter.ok -or $downloadedFilter.mixedLocalCount -lt 1 -or $downloadedFilter.mixedOnlineCount -lt 1 -or $downloadedFilter.downloadedCount -lt 1 -or -not $downloadedFilter.downloadedAllLocal -or $downloadedFilter.onlineCount -lt 1 -or -not $downloadedFilter.onlineAllOnline) {
+    throw "Smoke failed: downloaded/online filters did not apply. Mixed=$($downloadedFilter.mixedCount) local=$($downloadedFilter.mixedLocalCount) online=$($downloadedFilter.mixedOnlineCount) downloaded=$($downloadedFilter.downloadedCount) onlineOnly=$($downloadedFilter.onlineCount) Error=$($downloadedFilter.error)"
+}
+
 $hydrationCanaryResult = Invoke-GameEval @"
 new Func<object>(() => {
     var scheduler = new MajdataQolSongListMod.Core.HydrationScheduler();
@@ -461,13 +641,17 @@ new Func<object>(() => {
 "@
 $cacheCanary = $cacheCanaryResult.result.properties
 if (-not $cacheCanary.allUnderModRoot -or $cacheCanary.fileCount -lt 1) {
-    throw "Smoke failed: cache files were not confined to the mod cache root. Root: $($cacheCanary.expectedRoot) Count: $($cacheCanary.fileCount) Error=$($cacheCanary.error)"
+    throw "Smoke failed: cache files were not confined to the mod cache root. Root: $($cacheCanary.expectedRoot) Count=$($cacheCanary.fileCount) Error=$($cacheCanary.error)"
 }
 
 Invoke-GameEval @"
 new Func<object>(() => {
     Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
     bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "DifficultyBracket" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Title" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
     return new { reset = true };
 })()
 "@ | Out-Null
@@ -540,4 +724,4 @@ if (-not $gameplayCanary.enteredGame) {
     throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."

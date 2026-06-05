@@ -29,3 +29,12 @@
 - The artifact manifest records the game build/runtime metadata, current git commit, screenshot paths, and objective assertions for text content, setting order, status visibility/idle hide, score/rank visibility, Random Recommended tile selection, and list UI preservation.
 - Updated `test-smoke.ps1` to clean-start MajdataPlay before installing/running so stale hook processes from screenshot canaries cannot corrupt settings-order checks.
 - Verification: `test-unit.ps1` passed 96/96; `test-ui-screenshots.ps1` passed and refreshed all six production screenshot artifacts; `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T19:04:10+09:00 - Issue 14 live Map List sorting and filters
+
+- Wired runtime Map List settings into `SongStorage.Collections`: non-default sorting, difficulty-count filter, and downloaded/online scope now transform visible song arrays instead of only changing settings card values.
+- Preserved default Folder behavior when all settings are default, including current folder order plus `All`, `MyFavorites`, and `Random Recommended`; non-default settings transform each existing folder without replacing the folder carousel model.
+- Alternate grouping modes now build from songs that have already passed source/difficulty filters and use the selected sort mode inside generated folders. Supported live sort modes include title, artist, date added, difficulty, and note designer; score-dependent sort modes intentionally degrade to stable title/hash ordering until issue 16 wires score facets.
+- Added diagnostic setters and an immediate apply hook for deterministic in-game canaries.
+- Expanded `test-smoke.ps1` to verify title sorting visibly reorders a collection, all difficulty filters narrow/pass correctly, downloaded-only and online-only scopes contain the right row types, default/alternate folders still include `Random Recommended`, and list-to-gameplay still works with non-default title sorting active.
+- Verification: `test-unit.ps1` passed 96/96; expanded `test-smoke.ps1` passed against MajdataPlay.

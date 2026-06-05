@@ -210,6 +210,68 @@ namespace MajdataQolSongListMod
             return true;
         }
 
+        public static bool SetSortingModeForDiagnostics(string sortingMode)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            MapListSortMode parsed;
+            if (!Enum.TryParse(sortingMode, out parsed))
+            {
+                return false;
+            }
+
+            Active._runtimeSettings.Sorting = parsed;
+            return true;
+        }
+
+        public static bool SetDifficultyFilterForDiagnostics(string difficultyFilter)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            DifficultyCountFilter parsed;
+            if (!Enum.TryParse(difficultyFilter, out parsed))
+            {
+                return false;
+            }
+
+            Active._runtimeSettings.DifficultyFilter = parsed;
+            return true;
+        }
+
+        public static bool SetDownloadedSongsFilterForDiagnostics(string downloadedSongsFilter)
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            DownloadedSongsFilter parsed;
+            if (!Enum.TryParse(downloadedSongsFilter, out parsed))
+            {
+                return false;
+            }
+
+            Active._runtimeSettings.DownloadedSongsFilter = parsed;
+            return true;
+        }
+
+        public static bool ApplySettingsForDiagnostics()
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            Active.EnsureCollectionsApplied();
+            return true;
+        }
+
         public static bool ShowStatusForDiagnostics(string message)
         {
             if (Active == null)
@@ -395,6 +457,7 @@ namespace MajdataQolSongListMod
                 _lastAppliedCollections == null ||
                 _lastAppliedSettings == null ||
                 settings.DifficultyFilter != _lastAppliedSettings.DifficultyFilter ||
+                settings.Sorting != _lastAppliedSettings.Sorting ||
                 settings.Grouping != _lastAppliedSettings.Grouping ||
                 settings.DownloadedSongsFilter != _lastAppliedSettings.DownloadedSongsFilter ||
                 selectedDifficulty != _lastAppliedDifficulty;
@@ -442,10 +505,13 @@ namespace MajdataQolSongListMod
             SongCollection[] source = _baseCollections ?? SongStorage.Collections;
             if (settings.Grouping == MapListGroupingMode.Default)
             {
-                return AppendRandomRecommended(source);
+                SongCollection[] defaultCollections = HasActiveSongTransform(settings)
+                    ? TransformCollections(source, settings, selectedDifficulty)
+                    : source;
+                return AppendRandomRecommended(defaultCollections);
             }
 
-            List<ISongDetail> songs = AllSongs(source);
+            List<ISongDetail> songs = ApplySongSettings(AllSongs(source), settings, selectedDifficulty).ToList();
             IEnumerable<SongCollection> grouped;
             switch (settings.Grouping)
             {
@@ -481,6 +547,51 @@ namespace MajdataQolSongListMod
             }
 
             return AppendRandomRecommended(grouped.ToArray());
+        }
+
+        private static bool HasActiveSongTransform(MapListSettings settings)
+        {
+            return settings.DifficultyFilter != DifficultyCountFilter.No ||
+                settings.Sorting != MapListSortMode.Default ||
+                settings.DownloadedSongsFilter != DownloadedSongsFilter.Mixed;
+        }
+
+        private static SongCollection[] TransformCollections(IEnumerable<SongCollection> collections, MapListSettings settings, int selectedDifficulty)
+        {
+            return (collections ?? Enumerable.Empty<SongCollection>())
+                .Where(collection => collection != null)
+                .Select(collection => CloneCollection(collection, ApplySongSettings(collection.ToArray(), settings, selectedDifficulty)))
+                .ToArray();
+        }
+
+        private static SongCollection CloneCollection(SongCollection source, IEnumerable<ISongDetail> songs)
+        {
+            ISongDetail[] array = songs == null ? new ISongDetail[0] : songs.ToArray();
+            SongCollection clone;
+            if (!source.IsVirtual && !string.IsNullOrEmpty(source.Path) && Directory.Exists(source.Path))
+            {
+                clone = new SongCollection(source.Path, source.Name, array)
+                {
+                    IsOnline = source.IsOnline,
+                    Type = source.Type
+                };
+            }
+            else
+            {
+                clone = new SongCollection(source.Name, array)
+                {
+                    IsOnline = source.IsOnline,
+                    Type = source.Type
+                };
+            }
+
+            if (array.Length > 0)
+            {
+                int index = source.IsEmpty ? 0 : Array.FindIndex(array, song => song != null && source.Current != null && song.Hash == source.Current.Hash);
+                clone.Index = index < 0 ? 0 : index;
+            }
+
+            return clone;
         }
 
         private SongCollection[] AppendRandomRecommended(IEnumerable<SongCollection> collections)
@@ -531,6 +642,213 @@ namespace MajdataQolSongListMod
             }
 
             return byHash.Values.ToList();
+        }
+
+        private static IEnumerable<ISongDetail> ApplySongSettings(IEnumerable<ISongDetail> songs, MapListSettings settings, int selectedDifficulty)
+        {
+            IEnumerable<ISongDetail> filtered = (songs ?? Enumerable.Empty<ISongDetail>())
+                .Where(song => song != null)
+                .Where(song => SourcePasses(song, settings.DownloadedSongsFilter))
+                .Where(song => DifficultyFilterPasses(song, settings.DifficultyFilter));
+
+            return SortSongs(filtered, settings.Sorting, selectedDifficulty);
+        }
+
+        private static bool SourcePasses(ISongDetail song, DownloadedSongsFilter filter)
+        {
+            switch (filter)
+            {
+                case DownloadedSongsFilter.DownloadedOnly:
+                    return !song.IsOnline;
+                case DownloadedSongsFilter.OnlineOnly:
+                    return song.IsOnline;
+                default:
+                    return true;
+            }
+        }
+
+        private static bool DifficultyFilterPasses(ISongDetail song, DifficultyCountFilter filter)
+        {
+            int count = CountDifficulties(song);
+            switch (filter)
+            {
+                case DifficultyCountFilter.MoreThan1:
+                    return count > 1;
+                case DifficultyCountFilter.MoreThan2:
+                    return count > 2;
+                case DifficultyCountFilter.MoreThan3:
+                    return count > 3;
+                default:
+                    return true;
+            }
+        }
+
+        private static ISongDetail[] SortSongs(IEnumerable<ISongDetail> songs, MapListSortMode sortMode, int selectedDifficulty)
+        {
+            ISongDetail[] array = (songs ?? Enumerable.Empty<ISongDetail>()).Where(song => song != null).ToArray();
+            if (sortMode == MapListSortMode.Default)
+            {
+                return array;
+            }
+
+            Comparison<ISongDetail> comparison = SongComparison(sortMode, selectedDifficulty);
+            return array.OrderBy(song => song, Comparer<ISongDetail>.Create(comparison)).ToArray();
+        }
+
+        private static Comparison<ISongDetail> SongComparison(MapListSortMode sortMode, int selectedDifficulty)
+        {
+            switch (sortMode)
+            {
+                case MapListSortMode.DateAdded:
+                    return (left, right) => CompareDescending(left.Timestamp, right.Timestamp, SongTieBreak(left, right));
+                case MapListSortMode.Difficulty:
+                    return (left, right) => CompareNullableAscending(LevelSortValue(left, selectedDifficulty), LevelSortValue(right, selectedDifficulty), SongTieBreak(left, right));
+                case MapListSortMode.NoteDesigner:
+                    return (left, right) => CompareText(DesignerForDifficulty(left, selectedDifficulty), DesignerForDifficulty(right, selectedDifficulty), SongTieBreak(left, right));
+                case MapListSortMode.Title:
+                    return (left, right) => CompareText(left.Title, right.Title, SongTieBreak(left, right));
+                case MapListSortMode.Artist:
+                    return (left, right) => CompareText(left.Artist, right.Artist, SongTieBreak(left, right));
+                case MapListSortMode.PlayCount:
+                case MapListSortMode.Rank:
+                case MapListSortMode.ApFcRank:
+                    return SongTieBreak;
+                default:
+                    return SongTieBreak;
+            }
+        }
+
+        private static int SongTieBreak(ISongDetail left, ISongDetail right)
+        {
+            int title = StringComparer.OrdinalIgnoreCase.Compare(left.Title ?? string.Empty, right.Title ?? string.Empty);
+            if (title != 0)
+            {
+                return title;
+            }
+
+            return StringComparer.OrdinalIgnoreCase.Compare(left.Hash ?? string.Empty, right.Hash ?? string.Empty);
+        }
+
+        private static int CompareText(string left, string right, int tieBreak)
+        {
+            bool leftKnown = !string.IsNullOrWhiteSpace(left);
+            bool rightKnown = !string.IsNullOrWhiteSpace(right);
+            if (leftKnown && !rightKnown)
+            {
+                return -1;
+            }
+
+            if (!leftKnown && rightKnown)
+            {
+                return 1;
+            }
+
+            if (!leftKnown && !rightKnown)
+            {
+                return tieBreak;
+            }
+
+            int compare = StringComparer.OrdinalIgnoreCase.Compare(left.Trim(), right.Trim());
+            return compare != 0 ? compare : tieBreak;
+        }
+
+        private static int CompareDescending(DateTime left, DateTime right, int tieBreak)
+        {
+            int compare = right.CompareTo(left);
+            return compare != 0 ? compare : tieBreak;
+        }
+
+        private static int CompareNullableAscending<T>(T? left, T? right, int tieBreak)
+            where T : struct, IComparable<T>
+        {
+            if (left.HasValue && !right.HasValue)
+            {
+                return -1;
+            }
+
+            if (!left.HasValue && right.HasValue)
+            {
+                return 1;
+            }
+
+            if (!left.HasValue && !right.HasValue)
+            {
+                return tieBreak;
+            }
+
+            int compare = left.Value.CompareTo(right.Value);
+            return compare != 0 ? compare : tieBreak;
+        }
+
+        private static int CompareNullableDescending<T>(T? left, T? right, int tieBreak)
+            where T : struct, IComparable<T>
+        {
+            if (left.HasValue && !right.HasValue)
+            {
+                return -1;
+            }
+
+            if (!left.HasValue && right.HasValue)
+            {
+                return 1;
+            }
+
+            if (!left.HasValue && !right.HasValue)
+            {
+                return tieBreak;
+            }
+
+            int compare = right.Value.CompareTo(left.Value);
+            return compare != 0 ? compare : tieBreak;
+        }
+
+        private static decimal? LevelSortValue(ISongDetail song, int selectedDifficulty)
+        {
+            string level = LevelForDifficulty(song, selectedDifficulty);
+            if (string.IsNullOrWhiteSpace(level))
+            {
+                return null;
+            }
+
+            string text = level.Trim();
+            bool hasPlus = text.EndsWith("+", StringComparison.Ordinal);
+            if (hasPlus)
+            {
+                text = text.Substring(0, text.Length - 1).Trim();
+            }
+
+            decimal value;
+            if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out value))
+            {
+                return null;
+            }
+
+            return hasPlus ? value + 0.7m : value;
+        }
+
+        private static string LevelForDifficulty(ISongDetail song, int selectedDifficulty)
+        {
+            ReadOnlySpan<string> levels = song.Levels;
+            return selectedDifficulty >= 0 && selectedDifficulty < levels.Length ? levels[selectedDifficulty] : null;
+        }
+
+        private static string DesignerForDifficulty(ISongDetail song, int selectedDifficulty)
+        {
+            ReadOnlySpan<string> designers = song.Designers;
+            if (selectedDifficulty >= 0 && selectedDifficulty < designers.Length && !string.IsNullOrWhiteSpace(designers[selectedDifficulty]))
+            {
+                return designers[selectedDifficulty];
+            }
+
+            for (int i = 0; i < designers.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(designers[i]))
+                {
+                    return designers[i];
+                }
+            }
+
+            return null;
         }
 
         private static HashSet<string> DifficultyBuckets(ISongDetail song)
