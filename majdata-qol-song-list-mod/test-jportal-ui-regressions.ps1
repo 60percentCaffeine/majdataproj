@@ -347,7 +347,57 @@ new Func<object>(() => {
 "@
 }
 
-function Read-JportalState {
+function Convert-SerializedGameStateValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [string] -or $Value.GetType().IsPrimitive -or $Value -is [decimal]) {
+        return $Value
+    }
+
+    if ($Value -is [System.Array]) {
+        return @($Value | ForEach-Object { Convert-SerializedGameStateValue $_ })
+    }
+
+    $propertiesProperty = $Value.PSObject.Properties["properties"]
+    if ($null -ne $propertiesProperty) {
+        return Convert-SerializedGameStateValue $propertiesProperty.Value
+    }
+
+    $itemsProperty = $Value.PSObject.Properties["items"]
+    if ($null -ne $itemsProperty) {
+        $items = $itemsProperty.Value
+        if ($items -is [System.Array]) {
+            return @($items | ForEach-Object { Convert-SerializedGameStateValue $_ })
+        }
+
+        if ($null -eq $items) {
+            return @()
+        }
+
+        return @(Convert-SerializedGameStateValue $items)
+    }
+
+    if ($null -ne $Value.PSObject.Properties["`$ref"]) {
+        return $null
+    }
+
+    $object = [ordered]@{}
+    foreach ($property in $Value.PSObject.Properties) {
+        if ($property.Name -eq "type" -or $property.Name -eq "`$id") {
+            continue
+        }
+
+        $object[$property.Name] = Convert-SerializedGameStateValue $property.Value
+    }
+
+    return [pscustomobject]$object
+}
+
+function Read-VisibleGameState {
     $result = Invoke-GameEval @"
 new Func<object>(() => {
     try {
@@ -373,11 +423,22 @@ new Func<object>(() => {
         var selectedSong = coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
         var selectedCollection = coverListType.GetProperty("SelectedCollection", Flags).GetValue(coverList, null) as MajdataPlay.Collections.SongCollection;
         int desired = Convert.ToInt32(coverListType.GetField("desiredListPos", Flags).GetValue(coverList));
+        float listPosReal = Convert.ToSingle(coverListType.GetField("listPosReal", Flags).GetValue(coverList));
+        int selectedDifficulty = Convert.ToInt32(coverListType.GetField("selectedDifficulty", Flags).GetValue(coverList));
+        string mode = coverListType.GetProperty("Mode", Flags).GetValue(coverList, null).ToString();
+        bool isChartList = mode == "Chart";
 
         UnityEngine.Component big = UnityEngine.Resources.FindObjectsOfTypeAll(bigType)
             .OfType<UnityEngine.Component>()
             .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
         TMPro.TMP_Text title = big == null ? null : bigType.GetField("_title", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text artist = big == null ? null : bigType.GetField("_artist", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text charter = big == null ? null : bigType.GetField("_charter", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text level = big == null ? null : bigType.GetField("_level", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text achievementRate = big == null ? null : bigType.GetField("_archieveRate", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text rank = big == null ? null : bigType.GetField("_rank", Flags).GetValue(big) as TMPro.TMP_Text;
+        TMPro.TMP_Text clearMark = big == null ? null : bigType.GetField("_clearMark", Flags).GetValue(big) as TMPro.TMP_Text;
+        UnityEngine.UI.Image centerCover = big == null ? null : bigType.GetField("_cover", Flags).GetValue(big) as UnityEngine.UI.Image;
         TMPro.TMP_Text metadataLine = big == null ? null : big.GetComponentsInChildren<TMPro.TMP_Text>(true)
             .FirstOrDefault(t => t != null && t.gameObject != null && t.gameObject.name == "QoLSelectedSongMetadataLine");
 
@@ -385,6 +446,67 @@ new Func<object>(() => {
             .OfType<UnityEngine.Component>()
             .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
         UnityEngine.UI.Text analyzerText = analyzer == null ? null : chartAnalyzerType.GetField("anaText", Flags).GetValue(analyzer) as UnityEngine.UI.Text;
+
+        Func<UnityEngine.Sprite, object> spriteState = sprite => sprite == null ? null : new {
+            instanceId = sprite.GetInstanceID(),
+            name = sprite.name ?? "",
+            textureInstanceId = sprite.texture == null ? 0 : sprite.texture.GetInstanceID(),
+            textureName = sprite.texture == null ? "" : (sprite.texture.name ?? "")
+        };
+
+        Func<MajdataPlay.ISongDetail, object> songState = song => {
+            if (song == null) return null;
+
+            string[] levels;
+            string[] designers;
+            try {
+                levels = song.Levels == null ? Array.Empty<string>() : song.Levels.ToArray();
+            } catch {
+                levels = Array.Empty<string>();
+            }
+            try {
+                designers = song.Designers == null ? Array.Empty<string>() : song.Designers.ToArray();
+            } catch {
+                designers = Array.Empty<string>();
+            }
+
+            return new {
+                title = song.Title ?? "",
+                hash = song.Hash ?? "",
+                artist = song.Artist ?? "",
+                isOnline = song.IsOnline,
+                levels = levels,
+                designers = designers,
+                selectedLevel = selectedDifficulty >= 0 && selectedDifficulty < levels.Length ? levels[selectedDifficulty] ?? "" : "",
+                selectedDesigner = selectedDifficulty >= 0 && selectedDifficulty < designers.Length ? designers[selectedDifficulty] ?? "" : ""
+            };
+        };
+
+        Func<MajdataPlay.Collections.SongCollection, object> collectionState = collection => {
+            if (collection == null) return null;
+
+            MajdataPlay.ISongDetail current = null;
+            try {
+                current = collection.Count > 0 ? collection.Current : null;
+            } catch {
+                current = null;
+            }
+
+            return new {
+                name = collection.Name ?? "",
+                count = collection.Count,
+                index = collection.Index,
+                type = collection.Type.ToString(),
+                isOnline = collection.IsOnline,
+                currentSong = songState(current)
+            };
+        };
+
+        Func<object, Array> memoryToArray = memory => {
+            if (memory == null) return Array.Empty<object>();
+            var toArray = memory.GetType().GetMethod("ToArray");
+            return toArray == null ? Array.Empty<object>() : (Array)toArray.Invoke(memory, null);
+        };
 
         Func<MajdataPlay.ISongDetail, UnityEngine.Sprite> cachedCover = song => {
             if (song == null) return null;
@@ -400,7 +522,7 @@ new Func<object>(() => {
         };
 
         object memory = coverListType.GetField("_songDetailBindings", Flags).GetValue(coverList);
-        Array bindings = memory == null ? Array.Empty<object>() : (Array)memory.GetType().GetMethod("ToArray").Invoke(memory, null);
+        Array bindings = memoryToArray(memory);
         MajdataPlay.ISongDetail focusedBinding = null;
         MajdataPlay.ISongDetail focusedDisplay = null;
         int activeSmallCovers = 0;
@@ -410,7 +532,8 @@ new Func<object>(() => {
         var spriteOwners = new Dictionary<int, string>();
         var boundHashes = new HashSet<string>(StringComparer.Ordinal);
         var assignedDisplayerIds = new HashSet<int>();
-        var rows = new List<string>();
+        var visibleSongRows = new List<string>();
+        var visibleSongElements = new List<object>();
 
         for (int i = 0; i < bindings.Length; i++) {
             object binding = bindings.GetValue(i);
@@ -456,7 +579,70 @@ new Func<object>(() => {
             }
 
             activeSmallCovers++;
-            rows.Add(i.ToString() + ":" + (bindingSong == null ? "" : bindingSong.Hash) + "/" + boundHash + "/sprite:" + spriteId.ToString() + "/stale:" + stale.ToString());
+            float distance = i - listPosReal;
+            visibleSongRows.Add(i.ToString() + ":" + (bindingSong == null ? "" : bindingSong.Hash) + "/" + boundHash + "/sprite:" + spriteId.ToString() + "/stale:" + stale.ToString());
+            visibleSongElements.Add(new {
+                kind = "song",
+                index = i,
+                isSelected = i == desired,
+                distance = distance,
+                displayerInstanceId = component.GetInstanceID(),
+                binding = new { song = songState(bindingSong) },
+                display = new {
+                    song = songState(boundSong),
+                    image = new {
+                        sprite = spriteState(sprite),
+                        cachedSprite = spriteState(cached),
+                        isStale = stale
+                    }
+                }
+            });
+        }
+
+        object collectionMemory = coverListType.GetField("_songCollectionBindings", Flags).GetValue(coverList);
+        Array collectionBindings = memoryToArray(collectionMemory);
+        MajdataPlay.Collections.SongCollection focusedCollectionBinding = null;
+        MajdataPlay.Collections.SongCollection focusedCollectionDisplay = null;
+        var visibleFolderRows = new List<string>();
+        var visibleFolderElements = new List<object>();
+        var allFolders = new List<object>();
+        for (int i = 0; i < collectionBindings.Length; i++) {
+            object binding = collectionBindings.GetValue(i);
+            if (binding == null) continue;
+
+            var collection = binding.GetType().GetProperty("Collection").GetValue(binding, null) as MajdataPlay.Collections.SongCollection;
+            allFolders.Add(collectionState(collection));
+            object displayer = binding.GetType().GetProperty("Displayer").GetValue(binding, null);
+            if (i == desired) {
+                focusedCollectionBinding = collection;
+            }
+            if (displayer == null) continue;
+
+            var component = displayer as UnityEngine.Component;
+            if (component == null || component.gameObject == null || !component.gameObject.activeInHierarchy) continue;
+
+            var boundCollectionField = displayer.GetType().GetField("_boundCollection", Flags);
+            var boundCollection = boundCollectionField == null ? null : boundCollectionField.GetValue(displayer) as MajdataPlay.Collections.SongCollection;
+            if (i == desired) {
+                focusedCollectionDisplay = boundCollection;
+            }
+
+            var folderTextField = displayer.GetType().GetField("_folderText", Flags);
+            TMPro.TextMeshProUGUI folderText = folderTextField == null ? null : folderTextField.GetValue(displayer) as TMPro.TextMeshProUGUI;
+            float distance = i - listPosReal;
+            visibleFolderRows.Add(i.ToString() + ":" + (collection == null ? "" : collection.Name) + "/" + (boundCollection == null ? "" : boundCollection.Name));
+            visibleFolderElements.Add(new {
+                kind = "folder",
+                index = i,
+                isSelected = i == desired,
+                distance = distance,
+                displayerInstanceId = component.GetInstanceID(),
+                binding = new { folder = collectionState(collection) },
+                display = new {
+                    folder = collectionState(boundCollection),
+                    text = folderText == null ? "" : folderText.text
+                }
+            });
         }
 
         int activeSmallCoverDisplayers = 0;
@@ -505,25 +691,26 @@ new Func<object>(() => {
             allRows.Add("obj:" + componentId.ToString() + "/bound:" + boundHash + "/sprite:" + spriteId.ToString() + "/orphan:" + (!assignedDisplayerIds.Contains(componentId)).ToString() + "/stale:" + stale.ToString());
         }
 
-        return new {
-            ok = true,
-            scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
-            mode = coverListType.GetProperty("Mode", Flags).GetValue(coverList, null).ToString(),
-            selectedDifficulty = Convert.ToInt32(coverListType.GetField("selectedDifficulty", Flags).GetValue(coverList)),
-            collection = selectedCollection == null ? "" : selectedCollection.Name,
-            collectionCount = selectedCollection == null ? 0 : selectedCollection.Count,
-            desiredListPos = desired,
-            selectedTitle = selectedSong == null ? "" : selectedSong.Title,
-            selectedHash = selectedSong == null ? "" : selectedSong.Hash,
-            centerTitle = title == null ? "" : title.text,
-            qolLoaded = qolLoaded,
-            metadataFound = metadataLine != null && metadataLine.gameObject.activeInHierarchy,
-            metadataText = metadataLine == null ? "" : metadataLine.text,
-            analyzerText = analyzerText == null ? "" : analyzerText.text,
-            focusedBindingTitle = focusedBinding == null ? "" : focusedBinding.Title,
-            focusedBindingHash = focusedBinding == null ? "" : focusedBinding.Hash,
-            focusedDisplayTitle = focusedDisplay == null ? "" : focusedDisplay.Title,
-            focusedDisplayHash = focusedDisplay == null ? "" : focusedDisplay.Hash,
+        object selectedCarouselElement;
+        if (isChartList) {
+            selectedCarouselElement = new {
+                kind = "song",
+                index = desired,
+                binding = new { song = songState(focusedBinding) },
+                display = new { song = songState(focusedDisplay) }
+            };
+        } else {
+            selectedCarouselElement = new {
+                kind = "folder",
+                index = desired,
+                binding = new { folder = collectionState(focusedCollectionBinding) },
+                display = new { folder = collectionState(focusedCollectionDisplay) }
+            };
+        }
+        UnityEngine.Sprite selectedCachedCover = cachedCover(selectedSong);
+        UnityEngine.Sprite centerSprite = centerCover == null ? null : centerCover.sprite;
+        bool centerCoverMatchesSelectedSong = centerSprite != null && selectedCachedCover != null && object.ReferenceEquals(centerSprite, selectedCachedCover);
+        var carouselDiagnostics = new {
             activeSmallCovers = activeSmallCovers,
             staleVisibleSprites = staleVisibleSprites,
             duplicateVisibleSpriteDifferentSongs = duplicateVisibleSpriteDifferentSongs,
@@ -532,9 +719,82 @@ new Func<object>(() => {
             orphanedActiveSmallCovers = orphanedActiveSmallCovers,
             duplicateAllActiveBoundHashes = duplicateAllActiveBoundHashes,
             duplicateAllActiveSpriteDifferentSongs = duplicateAllActiveSpriteDifferentSongs,
-            staleAllActiveSprites = staleAllActiveSprites,
-            visibleRows = string.Join(";", rows.ToArray()),
-            allActiveRows = string.Join(";", allRows.ToArray())
+            staleAllActiveSprites = staleAllActiveSprites
+        };
+
+        return new {
+            ok = true,
+            schema = "majdata.visibleGameState.v1",
+            capturedFrame = UnityEngine.Time.frameCount,
+            screen = new {
+                scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name,
+                logicalScreen = "songSelect",
+                selecting = isChartList ? "songs" : "folders",
+                mode = mode,
+                width = UnityEngine.Screen.width,
+                height = UnityEngine.Screen.height
+            },
+            upperScreen = new {
+                qolLoaded = qolLoaded,
+                selectedDifficulty = selectedDifficulty,
+                selectedDifficultyName = ((MajdataPlay.ChartLevel)selectedDifficulty).ToString(),
+                sortMode = MajdataPlay.SongStorage.OrderBy.SortBy.ToString(),
+                sortKeyword = MajdataPlay.SongStorage.OrderBy.Keyword ?? "",
+                collectionIndex = MajdataPlay.SongStorage.CollectionIndex
+            },
+            songSelect = new {
+                selecting = isChartList ? "songs" : "folders",
+                selected = new {
+                    kind = isChartList ? "song" : "folder",
+                    index = desired,
+                    collection = collectionState(selectedCollection),
+                    song = songState(selectedSong),
+                    folder = isChartList ? null : collectionState(selectedCollection)
+                },
+                folders = allFolders.ToArray(),
+                visibleFolders = visibleFolderElements.ToArray(),
+                songs = visibleSongElements.Select(e => e).ToArray(),
+                carousel = new {
+                    mode = mode,
+                    selectedIndex = desired,
+                    realPosition = listPosReal,
+                    selectedElement = selectedCarouselElement,
+                    visibleElements = isChartList ? visibleSongElements.ToArray() : visibleFolderElements.ToArray(),
+                    visibleSongElements = visibleSongElements.ToArray(),
+                    visibleFolderElements = visibleFolderElements.ToArray(),
+                    diagnostics = carouselDiagnostics,
+                    debug = new {
+                        visibleSongRows = string.Join(";", visibleSongRows.ToArray()),
+                        visibleFolderRows = string.Join(";", visibleFolderRows.ToArray()),
+                        allActiveSongCoverRows = string.Join(";", allRows.ToArray())
+                    }
+                },
+                center = new {
+                    title = title == null ? "" : title.text,
+                    image = new {
+                        sprite = spriteState(centerSprite),
+                        selectedSongCachedSprite = spriteState(selectedCachedCover),
+                        matchesSelectedSongCachedCover = centerCoverMatchesSelectedSong
+                    }
+                },
+                rightInfo = new {
+                    title = title == null ? "" : title.text,
+                    artist = artist == null ? "" : artist.text,
+                    charter = charter == null ? "" : charter.text,
+                    level = level == null ? "" : level.text,
+                    achievementRate = achievementRate == null || !achievementRate.enabled ? "" : achievementRate.text,
+                    rank = rank == null ? "" : rank.text,
+                    clearMark = clearMark == null ? "" : clearMark.text,
+                    metadataLine = new {
+                        found = metadataLine != null && metadataLine.gameObject.activeInHierarchy,
+                        text = metadataLine == null ? "" : metadataLine.text
+                    },
+                    analyzerText = analyzerText == null ? "" : analyzerText.text
+                }
+            },
+            diagnostics = new {
+                carousel = carouselDiagnostics
+            }
         };
     } catch (Exception ex) {
         return new { ok = false, error = ex.ToString() };
@@ -542,7 +802,7 @@ new Func<object>(() => {
 })()
 "@
 
-    return $result.result.properties
+    return Convert-SerializedGameStateValue $result.result.properties
 }
 
 function Add-Case {
@@ -568,60 +828,70 @@ function Run-JportalUiSnapshot {
 
     Invoke-JportalAction -Action OpenDefault | Out-Null
     Start-Sleep -Seconds 8
-    $openDefaultState = Read-JportalState
+    $openDefaultState = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "01-open-default" "JPORTAL opened on the default first song." $openDefaultState)) | Out-Null
     $scroll = Invoke-JportalAction -Action Scroll
     Start-Sleep -Seconds 8
-    $afterSimpleScroll = Read-JportalState
+    $afterSimpleScroll = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "02-scroll-once" "JPORTAL after one song-list scroll." $afterSimpleScroll)) | Out-Null
     $scrollOk = [bool]$scroll.result.properties.ok
     if (-not ($afterSimpleScroll.ok -and $scrollOk)) {
-        Add-Case $cases "simple JPORTAL scroll reaches readable state before difficulty regression" $false "song=$($afterSimpleScroll.selectedTitle)/$($afterSimpleScroll.selectedHash); scrollOk=$scrollOk; error=$($afterSimpleScroll.error)"
+        Add-Case $cases "simple JPORTAL scroll reaches readable state before difficulty regression" $false "song=$($afterSimpleScroll.songSelect.selected.song.title)/$($afterSimpleScroll.songSelect.selected.song.hash); selecting=$($afterSimpleScroll.screen.selecting); scrollOk=$scrollOk; error=$($afterSimpleScroll.error)"
     }
 
     $difficulty = Invoke-JportalAction -Action Difficulty
     Start-Sleep -Seconds 3
-    $afterDifficulty = Read-JportalState
+    $afterDifficulty = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "03-difficulty-change" "JPORTAL after changing difficulty." $afterDifficulty)) | Out-Null
     $scrollAfterDifficulty = Invoke-JportalAction -Action Scroll
     Start-Sleep -Seconds 8
-    $afterDifficultyScroll = Read-JportalState
+    $afterDifficultyScroll = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "04-difficulty-change-scroll-once" "JPORTAL after difficulty change and one additional scroll." $afterDifficultyScroll)) | Out-Null
     $difficultyOk = [bool]$difficulty.result.properties.ok
     $scrollAfterDifficultyOk = [bool]$scrollAfterDifficulty.result.properties.ok
+    $afterDifficultyScrollCarousel = $afterDifficultyScroll.songSelect.carousel
+    $afterDifficultyScrollDiagnostics = $afterDifficultyScrollCarousel.diagnostics
     Add-Case $cases "visible carousel covers are not stale or duplicated after difficulty change and scroll" (
         $afterDifficultyScroll.ok -and $difficultyOk -and $scrollAfterDifficultyOk -and
-        $afterDifficultyScroll.staleVisibleSprites -eq 0 -and
-        $afterDifficultyScroll.duplicateVisibleSpriteDifferentSongs -eq 0 -and
-        $afterDifficultyScroll.duplicateVisibleBoundHashes -eq 0 -and
-        $afterDifficultyScroll.orphanedActiveSmallCovers -eq 0 -and
-        $afterDifficultyScroll.staleAllActiveSprites -eq 0 -and
-        $afterDifficultyScroll.duplicateAllActiveSpriteDifferentSongs -eq 0 -and
-        $afterDifficultyScroll.duplicateAllActiveBoundHashes -eq 0
-    ) "song=$($afterDifficultyScroll.selectedTitle)/$($afterDifficultyScroll.selectedHash); staleVisibleSprites=$($afterDifficultyScroll.staleVisibleSprites); duplicateVisibleSpriteDifferentSongs=$($afterDifficultyScroll.duplicateVisibleSpriteDifferentSongs); duplicateVisibleBoundHashes=$($afterDifficultyScroll.duplicateVisibleBoundHashes); orphanedActiveSmallCovers=$($afterDifficultyScroll.orphanedActiveSmallCovers); staleAllActiveSprites=$($afterDifficultyScroll.staleAllActiveSprites); duplicateAllActiveSpriteDifferentSongs=$($afterDifficultyScroll.duplicateAllActiveSpriteDifferentSongs); duplicateAllActiveBoundHashes=$($afterDifficultyScroll.duplicateAllActiveBoundHashes); difficultyOk=$difficultyOk; scrollOk=$scrollAfterDifficultyOk; rows=$($afterDifficultyScroll.visibleRows); allRows=$($afterDifficultyScroll.allActiveRows)"
+        $afterDifficultyScroll.screen.selecting -eq "songs" -and
+        $afterDifficultyScrollDiagnostics.staleVisibleSprites -eq 0 -and
+        $afterDifficultyScrollDiagnostics.duplicateVisibleSpriteDifferentSongs -eq 0 -and
+        $afterDifficultyScrollDiagnostics.duplicateVisibleBoundHashes -eq 0 -and
+        $afterDifficultyScrollDiagnostics.orphanedActiveSmallCovers -eq 0 -and
+        $afterDifficultyScrollDiagnostics.staleAllActiveSprites -eq 0 -and
+        $afterDifficultyScrollDiagnostics.duplicateAllActiveSpriteDifferentSongs -eq 0 -and
+        $afterDifficultyScrollDiagnostics.duplicateAllActiveBoundHashes -eq 0
+    ) "song=$($afterDifficultyScroll.songSelect.selected.song.title)/$($afterDifficultyScroll.songSelect.selected.song.hash); selecting=$($afterDifficultyScroll.screen.selecting); staleVisibleSprites=$($afterDifficultyScrollDiagnostics.staleVisibleSprites); duplicateVisibleSpriteDifferentSongs=$($afterDifficultyScrollDiagnostics.duplicateVisibleSpriteDifferentSongs); duplicateVisibleBoundHashes=$($afterDifficultyScrollDiagnostics.duplicateVisibleBoundHashes); orphanedActiveSmallCovers=$($afterDifficultyScrollDiagnostics.orphanedActiveSmallCovers); staleAllActiveSprites=$($afterDifficultyScrollDiagnostics.staleAllActiveSprites); duplicateAllActiveSpriteDifferentSongs=$($afterDifficultyScrollDiagnostics.duplicateAllActiveSpriteDifferentSongs); duplicateAllActiveBoundHashes=$($afterDifficultyScrollDiagnostics.duplicateAllActiveBoundHashes); difficultyOk=$difficultyOk; scrollOk=$scrollAfterDifficultyOk; visibleSongs=$($afterDifficultyScrollCarousel.debug.visibleSongRows); allActiveSongs=$($afterDifficultyScrollCarousel.debug.allActiveSongCoverRows)"
 
     $rankPrepare = Invoke-JportalAction -Action PrepareRank
     $rankPrepareOk = [bool]$rankPrepare.result.properties.ok
     Start-Sleep -Seconds 4
     $rankOpen = Invoke-JportalAction -Action OpenRank
     Start-Sleep -Seconds 2
-    $rankOpenState = Read-JportalState
+    $rankOpenState = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "05-rank-open" "JPORTAL rank-sorted setup before changing difficulty." $rankOpenState)) | Out-Null
     $rankDifficulty = Invoke-JportalAction -Action DifficultyToBasic
     Start-Sleep -Seconds 4
-    $rankState = Read-JportalState
+    $rankState = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "06-rank-difficulty-change" "JPORTAL rank-sorted setup after changing difficulty." $rankState)) | Out-Null
     $rankOpenOk = [bool]$rankOpen.result.properties.ok
     $rankDifficultyOk = [bool]$rankDifficulty.result.properties.ok
     $expectedBasicIndex = if ($rankPrepare.result.properties.expectedBasicIndex -ne $null) { [int]$rankPrepare.result.properties.expectedBasicIndex } else { -1 }
+    $rankSelectedSong = $rankState.songSelect.selected.song
+    $rankCarousel = $rankState.songSelect.carousel
+    $rankSelectedElement = $rankCarousel.selectedElement
+    $rankFocusedBindingSong = $rankSelectedElement.binding.song
+    $rankFocusedDisplaySong = $rankSelectedElement.display.song
+    $rankCenter = $rankState.songSelect.center
     Add-Case $cases "rank-sorted carousel moves focused item after difficulty change" (
         $rankState.ok -and $rankPrepareOk -and $rankOpenOk -and $rankDifficultyOk -and
-        $rankState.selectedDifficulty -eq 1 -and
-        $rankState.desiredListPos -eq $expectedBasicIndex -and
-        $rankState.selectedHash -eq $rankState.focusedBindingHash -and
-        $rankState.selectedHash -eq $rankState.focusedDisplayHash -and
-        $rankState.centerTitle -eq $rankState.selectedTitle
-    ) "expectedBasicIndex=$expectedBasicIndex; selected=$($rankState.selectedTitle)/$($rankState.selectedHash); desired=$($rankState.desiredListPos); focusedBinding=$($rankState.focusedBindingTitle)/$($rankState.focusedBindingHash); focusedDisplay=$($rankState.focusedDisplayTitle)/$($rankState.focusedDisplayHash); centerTitle=$($rankState.centerTitle); prepareOk=$rankPrepareOk; openOk=$rankOpenOk; difficultyOk=$rankDifficultyOk; rows=$($rankState.visibleRows)"
+        $rankState.screen.selecting -eq "songs" -and
+        $rankState.upperScreen.selectedDifficulty -eq 1 -and
+        $rankCarousel.selectedIndex -eq $expectedBasicIndex -and
+        $rankSelectedSong.hash -eq $rankFocusedBindingSong.hash -and
+        $rankSelectedSong.hash -eq $rankFocusedDisplaySong.hash -and
+        $rankCenter.title -eq $rankSelectedSong.title
+    ) "expectedBasicIndex=$expectedBasicIndex; selected=$($rankSelectedSong.title)/$($rankSelectedSong.hash); selectedIndex=$($rankCarousel.selectedIndex); focusedBinding=$($rankFocusedBindingSong.title)/$($rankFocusedBindingSong.hash); focusedDisplay=$($rankFocusedDisplaySong.title)/$($rankFocusedDisplaySong.hash); centerTitle=$($rankCenter.title); selecting=$($rankState.screen.selecting); difficulty=$($rankState.upperScreen.selectedDifficulty); prepareOk=$rankPrepareOk; openOk=$rankOpenOk; difficultyOk=$rankDifficultyOk; visibleSongs=$($rankCarousel.debug.visibleSongRows)"
 
     return [pscustomobject]@{
         Label = $Label
