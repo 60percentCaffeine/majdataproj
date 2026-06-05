@@ -56,3 +56,12 @@
 - Wired live Rank, Play Count, AP/FC Rank, and DX Score sorting to available score facts via reflection over `ScoreManager.GetScore`, with deterministic diagnostic score overrides for canaries.
 - Expanded `test-smoke.ps1` to verify controlled SSS+/C/No Play grouping and pairwise rank, play count, AP/FC, and DX-score sorting without breaking list-to-gameplay.
 - Verification: `build.ps1` passed; `test-unit.ps1` passed 120/120; expanded `test-smoke.ps1` passed against MajdataPlay.
+
+## 2026-06-05T19:36:08+09:00 - Issue 17 Random Recommended fetching and refresh
+
+- Populated the live `Random Recommended` folder with playable rows instead of leaving it as an empty shell.
+- Added bounded MajdataNet chart-list recommendation refresh with hash resolution against live song rows, preferring resolved local rows when duplicates exist.
+- Added deterministic local fallback recommendations when network fetch fails, is disabled by diagnostic path, or returns rows that cannot be resolved locally.
+- Added refresh diagnostics/status handling for progress, success, and recoverable fallback states, and forced collection refresh now syncs the active list displayer's private collection arrays.
+- Expanded `test-smoke.ps1` to verify populated Random Recommended rows, varied forced-fallback refresh batches, fallback status text, folder presence after alternate grouping, and list-to-gameplay from a recommended chart.
+- Verification: `build.ps1` passed; `test-unit.ps1` passed 120/120; expanded `test-smoke.ps1` passed against MajdataPlay.

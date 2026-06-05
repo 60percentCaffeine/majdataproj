@@ -187,6 +187,7 @@ namespace MajdataQolSongListMod
         private readonly Dictionary<string, ScoreFacet> _scoreOverrides = new Dictionary<string, ScoreFacet>(StringComparer.Ordinal);
         private readonly object _selectedSongMetadataLock = new object();
         private readonly object _scoreOverrideLock = new object();
+        private readonly object _randomRecommendedLock = new object();
 
         private SettingManager _patchedSettingManager;
         private SongCollection[] _baseCollections;
@@ -199,6 +200,9 @@ namespace MajdataQolSongListMod
         private int _frame;
         private string _lastMetadataLine = string.Empty;
         private QolStatusOverlay _statusOverlay;
+        private ISongDetail[] _randomRecommendedSongs = new ISongDetail[0];
+        private int _randomRecommendedSeed = 17;
+        private string _lastRandomRecommendedStatus = "Random Recommended empty";
 
         public QolRuntimeBridge(Action<string> log, Action<string> error)
         {
@@ -353,6 +357,38 @@ namespace MajdataQolSongListMod
 
             Active.SetScoreOverride(hash, RuntimeScoreFacetAdapter.FromRuntimeScore(dxAccuracy, playCount, comboState, dxScore));
             return true;
+        }
+
+        public static string RefreshRandomRecommendedForDiagnostics(bool forceFailure)
+        {
+            if (Active == null)
+            {
+                return "inactive";
+            }
+
+            Active.ShowStatus("Refreshing Random Recommended...", 0f);
+            Active.RefreshRandomRecommended(forceFailure);
+            Active.EnsureCollectionsApplied(force: true);
+            Active.ShowStatus(Active._lastRandomRecommendedStatus, 3.0f);
+            return Active._lastRandomRecommendedStatus;
+        }
+
+        public static string RandomRecommendedDiagnosticsSnapshot()
+        {
+            if (Active == null)
+            {
+                return "randomCount=0; status=inactive; hashes=";
+            }
+
+            ISongDetail[] rows;
+            lock (Active._randomRecommendedLock)
+            {
+                rows = Active._randomRecommendedSongs.ToArray();
+            }
+
+            return "randomCount=" + rows.Length.ToString(CultureInfo.InvariantCulture) +
+                "; status=" + Active._lastRandomRecommendedStatus +
+                "; hashes=" + string.Join("|", rows.Select(song => song == null ? string.Empty : song.Hash).Where(hash => !string.IsNullOrWhiteSpace(hash)).ToArray());
         }
 
         public static string UiDiagnosticsSnapshot()
@@ -513,7 +549,7 @@ namespace MajdataQolSongListMod
             }
         }
 
-        private void EnsureCollectionsApplied()
+        private void EnsureCollectionsApplied(bool force = false)
         {
             SongCollection[] current = SongStorage.Collections;
             if (current == null || current.Length == 0)
@@ -526,6 +562,7 @@ namespace MajdataQolSongListMod
             int selectedDifficulty = SelectedDifficultyIndex();
             MapListSettings settings = _runtimeSettings.Snapshot();
             bool needsApply =
+                force ||
                 _lastAppliedCollections == null ||
                 _lastAppliedSettings == null ||
                 settings.DifficultyFilter != _lastAppliedSettings.DifficultyFilter ||
@@ -691,13 +728,136 @@ namespace MajdataQolSongListMod
                 insertIndex = insertIndex >= 0 ? insertIndex + 1 : result.Count;
             }
 
-            result.Insert(insertIndex, new SongCollection(RandomRecommendedName, new ISongDetail[0])
+            ISongDetail[] recommendedRows = RandomRecommendedRows(result);
+            result.Insert(insertIndex, new SongCollection(RandomRecommendedName, recommendedRows)
             {
                 IsOnline = true,
                 IsVirtual = true,
                 Type = ChartStorageType.PlayList
             });
             return result.ToArray();
+        }
+
+        private ISongDetail[] RandomRecommendedRows(IEnumerable<SongCollection> availableCollections)
+        {
+            lock (_randomRecommendedLock)
+            {
+                if (_randomRecommendedSongs.Length == 0)
+                {
+                    _randomRecommendedSongs = PickLocalRecommendations(AllSongs(availableCollections), _randomRecommendedSeed).ToArray();
+                    _lastRandomRecommendedStatus = _randomRecommendedSongs.Length == 0
+                        ? "Random Recommended has no playable fallback songs"
+                        : "Random Recommended populated from local fallback: " + _randomRecommendedSongs.Length.ToString(CultureInfo.InvariantCulture) + " songs";
+                }
+
+                return _randomRecommendedSongs.ToArray();
+            }
+        }
+
+        private void RefreshRandomRecommended(bool forceFailure)
+        {
+            List<ISongDetail> availableSongs = AllSongs(_baseCollections ?? SongStorage.Collections);
+            int seed = Interlocked.Increment(ref _randomRecommendedSeed);
+            ISongDetail[] resolved = forceFailure ? new ISongDetail[0] : TryFetchMajdataNetRecommendations(availableSongs, seed);
+            bool fromFallback = resolved.Length == 0;
+            if (fromFallback)
+            {
+                resolved = PickLocalRecommendations(availableSongs, seed).ToArray();
+            }
+
+            lock (_randomRecommendedLock)
+            {
+                _randomRecommendedSongs = resolved;
+                if (forceFailure)
+                {
+                    _lastRandomRecommendedStatus = "Random Recommended refresh failed; using local fallback: " + resolved.Length.ToString(CultureInfo.InvariantCulture) + " songs";
+                }
+                else if (fromFallback)
+                {
+                    _lastRandomRecommendedStatus = "Random Recommended refreshed from local fallback: " + resolved.Length.ToString(CultureInfo.InvariantCulture) + " songs";
+                }
+                else
+                {
+                    _lastRandomRecommendedStatus = "Random Recommended refreshed from MajdataNet: " + resolved.Length.ToString(CultureInfo.InvariantCulture) + " songs";
+                }
+            }
+        }
+
+        private static ISongDetail[] TryFetchMajdataNetRecommendations(IEnumerable<ISongDetail> availableSongs, int seed)
+        {
+            try
+            {
+                List<ISongDetail> songs = (availableSongs ?? Enumerable.Empty<ISongDetail>())
+                    .Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash))
+                    .ToList();
+                Dictionary<string, ISongDetail> byHash = new Dictionary<string, ISongDetail>(StringComparer.Ordinal);
+                foreach (ISongDetail song in songs)
+                {
+                    if (!byHash.ContainsKey(song.Hash) || (byHash[song.Hash].IsOnline && !song.IsOnline))
+                    {
+                        byHash[song.Hash] = song;
+                    }
+                }
+
+                RandomRecommendationService service = new RandomRecommendationService(new MajdataNetAdapter("https://majdata.net", new HttpTextFetcher()));
+                Task<MajdataNetResult<RandomRecommendationBatch>> fetchTask = Task.Run(() => service.BuildRecommendations(new RandomRecommendationRequest(seed, 24, false), null));
+                if (!fetchTask.Wait(3000))
+                {
+                    return new ISongDetail[0];
+                }
+
+                MajdataNetResult<RandomRecommendationBatch> result = fetchTask.Result;
+                if (!result.Success || result.Value == null)
+                {
+                    return new ISongDetail[0];
+                }
+
+                List<ISongDetail> resolved = new List<ISongDetail>();
+                foreach (CatalogRow row in result.Value.Rows)
+                {
+                    ISongDetail song;
+                    if (row != null && !string.IsNullOrWhiteSpace(row.Hash) && byHash.TryGetValue(row.Hash, out song))
+                    {
+                        resolved.Add(song);
+                    }
+                }
+
+                return resolved.Take(12).ToArray();
+            }
+            catch
+            {
+                return new ISongDetail[0];
+            }
+        }
+
+        private static IEnumerable<ISongDetail> PickLocalRecommendations(IEnumerable<ISongDetail> songs, int seed)
+        {
+            Dictionary<string, ISongDetail> byHash = new Dictionary<string, ISongDetail>(StringComparer.Ordinal);
+            foreach (ISongDetail song in songs ?? Enumerable.Empty<ISongDetail>())
+            {
+                if (song == null || string.IsNullOrWhiteSpace(song.Hash))
+                {
+                    continue;
+                }
+
+                ISongDetail existing;
+                if (!byHash.TryGetValue(song.Hash, out existing) || (existing.IsOnline && !song.IsOnline))
+                {
+                    byHash[song.Hash] = song;
+                }
+            }
+
+            List<ISongDetail> shuffled = byHash.Values.ToList();
+            System.Random random = new System.Random(seed);
+            for (int i = shuffled.Count - 1; i > 0; i--)
+            {
+                int swapIndex = random.Next(i + 1);
+                ISongDetail current = shuffled[i];
+                shuffled[i] = shuffled[swapIndex];
+                shuffled[swapIndex] = current;
+            }
+
+            return shuffled.Take(12).ToArray();
         }
 
         private static List<ISongDetail> AllSongs(IEnumerable<SongCollection> collections)
@@ -1170,6 +1330,32 @@ namespace MajdataQolSongListMod
             {
                 SongStorage.CollectionIndex = 0;
             }
+
+            SyncActiveCoverListCollections(collections);
+        }
+
+        private static void SyncActiveCoverListCollections(SongCollection[] collections)
+        {
+            if (collections == null || collections.Length == 0)
+            {
+                return;
+            }
+
+            CoverListDisplayer displayer = Object.FindObjectOfType<CoverListDisplayer>();
+            if (displayer == null)
+            {
+                return;
+            }
+
+            SetPrivateField(displayer, "_collections", new ReadOnlyMemory<SongCollection>(collections));
+            SetPrivateField(displayer, "_easySortedCollections", collections);
+            SetPrivateField(displayer, "_basicSortedCollections", collections);
+            SetPrivateField(displayer, "_advanceSortedCollections", collections);
+            SetPrivateField(displayer, "_expertSortedCollections", collections);
+            SetPrivateField(displayer, "_masterSortedCollections", collections);
+            SetPrivateField(displayer, "_reMasterSortedCollections", collections);
+            SetPrivateField(displayer, "_utageSortedCollections", collections);
+            SetPrivateField(displayer, "_currentCollection", collections[SongStorage.CollectionIndex]);
         }
 
         private void PatchRandomRecommendedTiles()

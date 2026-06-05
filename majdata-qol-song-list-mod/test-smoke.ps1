@@ -399,6 +399,54 @@ if (-not ($refreshSnapshot -like "*Long press refresh to get new recommendations
     throw "Smoke failed: Random Recommended refresh instruction was not shown. Snapshot: $refreshSnapshot"
 }
 
+$randomRecommendedResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Func<string> randomSnapshot = () => (string)bridgeType.GetMethod("RandomRecommendedDiagnosticsSnapshot").Invoke(null, null);
+    string initialSnapshot = randomSnapshot();
+    var initial = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "Random Recommended");
+    int initialCount = initial == null ? 0 : initial.Count;
+    string firstRefresh = (string)bridgeType.GetMethod("RefreshRandomRecommendedForDiagnostics").Invoke(null, new object[] { true });
+    string firstSnapshot = randomSnapshot();
+    var first = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "Random Recommended");
+    string firstHashes = first == null ? "" : string.Join("|", first.ToArray().Select(song => song.Hash).Take(8));
+    string secondRefresh = (string)bridgeType.GetMethod("RefreshRandomRecommendedForDiagnostics").Invoke(null, new object[] { true });
+    string secondSnapshot = randomSnapshot();
+    var second = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "Random Recommended");
+    string secondHashes = second == null ? "" : string.Join("|", second.ToArray().Select(song => song.Hash).Take(8));
+
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Rank" });
+    bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    var groupedRandom = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "Random Recommended");
+
+    return new {
+        ok = true,
+        initialSnapshot = initialSnapshot,
+        initialCount = initialCount,
+        firstRefresh = firstRefresh,
+        firstSnapshot = firstSnapshot,
+        firstCount = first == null ? 0 : first.Count,
+        firstHashes = firstHashes,
+        secondRefresh = secondRefresh,
+        secondSnapshot = secondSnapshot,
+        secondCount = second == null ? 0 : second.Count,
+        secondHashes = secondHashes,
+        varied = firstHashes != secondHashes,
+        groupedPresent = groupedRandom != null,
+        groupedCount = groupedRandom == null ? 0 : groupedRandom.Count,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, initialSnapshot = "", initialCount = 0, firstRefresh = "", firstSnapshot = "", firstCount = 0, firstHashes = "", secondRefresh = "", secondSnapshot = "", secondCount = 0, secondHashes = "", varied = false, groupedPresent = false, groupedCount = 0, error = ex.ToString() };
+    }
+})()
+"@
+$randomRecommended = $randomRecommendedResult.result.properties
+if (-not $randomRecommended.ok -or $randomRecommended.initialCount -lt 1 -or $randomRecommended.firstCount -lt 1 -or $randomRecommended.secondCount -lt 1 -or -not $randomRecommended.varied -or -not $randomRecommended.groupedPresent -or $randomRecommended.groupedCount -lt 1 -or -not ($randomRecommended.firstRefresh -like "*fallback*")) {
+    throw "Smoke failed: Random Recommended did not populate/refresh/fallback correctly. Initial=$($randomRecommended.initialSnapshot) First=$($randomRecommended.firstRefresh) FirstHashes=$($randomRecommended.firstHashes) Second=$($randomRecommended.secondRefresh) SecondHashes=$($randomRecommended.secondHashes) GroupedPresent=$($randomRecommended.groupedPresent) GroupedCount=$($randomRecommended.groupedCount) Error=$($randomRecommended.error)"
+}
+
 $levelGroupingResult = Invoke-GameEval @"
 new Func<object>(() => {
     try {
@@ -771,7 +819,7 @@ if (-not $cacheCanary.allUnderModRoot -or $cacheCanary.fileCount -lt 1) {
 Invoke-GameEval @"
 new Func<object>(() => {
     Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
-    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "DifficultyBracket" });
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
     bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Title" });
     bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
     bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
@@ -790,9 +838,9 @@ new Func<object>(() => {
         System.Reflection.BindingFlags.NonPublic |
         System.Reflection.BindingFlags.Instance;
     var collections = MajdataPlay.SongStorage.Collections;
-    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name != "Random Recommended");
+    int index = Array.FindIndex(collections, c => c != null && c.Count > 0 && c.Name == "Random Recommended");
     if (index < 0) {
-        throw new Exception("No nonempty collection was available for gameplay canary.");
+        throw new Exception("No nonempty Random Recommended collection was available for gameplay canary.");
     }
 
     MajdataPlay.SongStorage.CollectionIndex = index;
@@ -848,4 +896,4 @@ if (-not $gameplayCanary.enteredGame) {
     throw "Smoke failed: list-to-gameplay flow did not enter Game scene. Scene=$($gameplayCanary.scene) Error=$($gameplayCanary.error)"
 }
 
-Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended refresh status, level bucket grouping, live sorting/filter/scope settings, live score/rank facets, hydration gameplay pause, mod cache path, and list-to-gameplay flow all passed."
+Write-Host "Smoke passed: default folders, grouping, settings order, selected-song metadata, hydrated duration/BPM metadata, hydration status overlay, Random Recommended populated refresh/fallback status, level bucket grouping, live sorting/filter/scope settings, live score/rank facets, hydration gameplay pause, mod cache path, and Random Recommended list-to-gameplay flow all passed."
