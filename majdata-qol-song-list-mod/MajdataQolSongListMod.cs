@@ -1079,7 +1079,41 @@ namespace MajdataQolSongListMod
                 .Where(song => SourcePasses(song, settings.DownloadedSongsFilter))
                 .Where(song => DifficultyFilterPasses(song, settings.DifficultyFilter));
 
-            return SortSongs(filtered, settings.Sorting, selectedDifficulty);
+            return SortSongs(DeduplicateSongsByHash(filtered), settings.Sorting, selectedDifficulty);
+        }
+
+        private static IEnumerable<ISongDetail> DeduplicateSongsByHash(IEnumerable<ISongDetail> songs)
+        {
+            List<ISongDetail> result = new List<ISongDetail>();
+            Dictionary<string, int> indexByHash = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (ISongDetail song in songs ?? Enumerable.Empty<ISongDetail>())
+            {
+                if (song == null)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(song.Hash))
+                {
+                    result.Add(song);
+                    continue;
+                }
+
+                int index;
+                if (!indexByHash.TryGetValue(song.Hash, out index))
+                {
+                    indexByHash.Add(song.Hash, result.Count);
+                    result.Add(song);
+                    continue;
+                }
+
+                if (result[index] != null && result[index].IsOnline && !song.IsOnline)
+                {
+                    result[index] = song;
+                }
+            }
+
+            return result;
         }
 
         private static bool SourcePasses(ISongDetail song, DownloadedSongsFilter filter)
@@ -1545,19 +1579,237 @@ namespace MajdataQolSongListMod
                 SongStorage.CollectionIndex = 0;
             }
 
-            SetPrivateField(displayer, "_collections", new ReadOnlyMemory<SongCollection>(collections));
-            SetPrivateField(displayer, "_easySortedCollections", collections);
-            SetPrivateField(displayer, "_basicSortedCollections", collections);
-            SetPrivateField(displayer, "_advanceSortedCollections", collections);
-            SetPrivateField(displayer, "_expertSortedCollections", collections);
-            SetPrivateField(displayer, "_masterSortedCollections", collections);
-            SetPrivateField(displayer, "_reMasterSortedCollections", collections);
-            SetPrivateField(displayer, "_utageSortedCollections", collections);
-            SetPrivateField(displayer, "_currentCollection", collections[SongStorage.CollectionIndex]);
+            bool wasChartList = displayer.IsChartList;
+            bool wasDirList = displayer.IsDirList;
+            bool switchedDirThroughSongList = false;
+            ISongDetail selectedSong = null;
+            try
+            {
+                selectedSong = wasChartList ? displayer.SelectedSong : SongStorage.WorkingCollection.Current;
+            }
+            catch
+            {
+                selectedSong = null;
+            }
 
-            if (displayer.IsChartList)
+            if (wasChartList)
+            {
+                displayer.SwitchToDirList();
+            }
+            else if (wasDirList && CanSwitchCurrentCollectionToSongList(displayer))
             {
                 displayer.SwitchToSongList();
+                switchedDirThroughSongList = displayer.IsChartList;
+            }
+
+            PreserveCollectionCursor(collections, SongStorage.CollectionIndex, selectedSong);
+            SongCollection[] easyCollections;
+            SongCollection[] basicCollections;
+            SongCollection[] advanceCollections;
+            SongCollection[] expertCollections;
+            SongCollection[] masterCollections;
+            SongCollection[] reMasterCollections;
+            SongCollection[] utageCollections;
+            BuildDifficultyCollections(
+                collections,
+                out easyCollections,
+                out basicCollections,
+                out advanceCollections,
+                out expertCollections,
+                out masterCollections,
+                out reMasterCollections,
+                out utageCollections);
+
+            SetPrivateField(displayer, "_collections", new ReadOnlyMemory<SongCollection>(collections));
+            SetPrivateField(displayer, "_easySortedCollections", easyCollections);
+            SetPrivateField(displayer, "_basicSortedCollections", basicCollections);
+            SetPrivateField(displayer, "_advanceSortedCollections", advanceCollections);
+            SetPrivateField(displayer, "_expertSortedCollections", expertCollections);
+            SetPrivateField(displayer, "_masterSortedCollections", masterCollections);
+            SetPrivateField(displayer, "_reMasterSortedCollections", reMasterCollections);
+            SetPrivateField(displayer, "_utageSortedCollections", utageCollections);
+            SetPrivateField(displayer, "_currentCollection", CollectionForDifficulty(displayer.selectedDifficulty, easyCollections, basicCollections, advanceCollections, expertCollections, masterCollections, reMasterCollections, utageCollections)[SongStorage.CollectionIndex]);
+
+            if (wasChartList)
+            {
+                displayer.SwitchToSongList();
+            }
+            else if (switchedDirThroughSongList)
+            {
+                displayer.SwitchToDirList();
+            }
+        }
+
+        private static bool CanSwitchCurrentCollectionToSongList(CoverListDisplayer displayer)
+        {
+            SongCollection current = GetPrivateField<SongCollection>(displayer, "_currentCollection");
+            return current != null && current.Count > 0 && current.Type != ChartStorageType.Dan;
+        }
+
+        private static void PreserveCollectionCursor(SongCollection[] collections, int collectionIndex, ISongDetail selectedSong)
+        {
+            if (collections == null || collectionIndex < 0 || collectionIndex >= collections.Length || selectedSong == null || string.IsNullOrWhiteSpace(selectedSong.Hash))
+            {
+                return;
+            }
+
+            SongCollection collection = collections[collectionIndex];
+            if (collection == null || collection.Count == 0)
+            {
+                return;
+            }
+
+            ISongDetail match = collection.ToArray().FirstOrDefault(song => song != null && string.Equals(song.Hash, selectedSong.Hash, StringComparison.Ordinal));
+            if (match != null)
+            {
+                collection.SetCursor(match);
+            }
+        }
+
+        private static void BuildDifficultyCollections(
+            SongCollection[] collections,
+            out SongCollection[] easyCollections,
+            out SongCollection[] basicCollections,
+            out SongCollection[] advanceCollections,
+            out SongCollection[] expertCollections,
+            out SongCollection[] masterCollections,
+            out SongCollection[] reMasterCollections,
+            out SongCollection[] utageCollections)
+        {
+            if (SongStorage.OrderBy.SortBy != SortType.ByRank)
+            {
+                easyCollections = collections;
+                basicCollections = collections;
+                advanceCollections = collections;
+                expertCollections = collections;
+                masterCollections = collections;
+                reMasterCollections = collections;
+                utageCollections = collections;
+                return;
+            }
+
+            easyCollections = RankSortedCollections(collections, "Easy");
+            basicCollections = RankSortedCollections(collections, "Basic");
+            advanceCollections = RankSortedCollections(collections, "Advance");
+            expertCollections = RankSortedCollections(collections, "Expert");
+            masterCollections = RankSortedCollections(collections, "Master");
+            reMasterCollections = RankSortedCollections(collections, "ReMaster");
+            utageCollections = RankSortedCollections(collections, "UTAGE");
+        }
+
+        private static SongCollection[] RankSortedCollections(SongCollection[] collections, string scorePropertyName)
+        {
+            if (collections == null)
+            {
+                return new SongCollection[0];
+            }
+
+            SongCollection[] result = new SongCollection[collections.Length];
+            for (int i = 0; i < collections.Length; i++)
+            {
+                SongCollection collection = collections[i];
+                if (collection == null || collection.Count == 0 || collection.Type == ChartStorageType.Dan)
+                {
+                    result[i] = collection;
+                    continue;
+                }
+
+                ISongDetail[] sorted = collection.ToArray()
+                    .Select((song, index) => new
+                    {
+                        Song = song,
+                        Index = index,
+                        Accuracy = NativeRankAccuracy(song, scorePropertyName)
+                    })
+                    .OrderByDescending(item => item.Accuracy)
+                    .ThenBy(item => item.Index)
+                    .Select(item => item.Song)
+                    .ToArray();
+                result[i] = CloneCollection(collection, sorted);
+            }
+
+            return result;
+        }
+
+        private static double NativeRankAccuracy(ISongDetail song, string scorePropertyName)
+        {
+            if (song == null)
+            {
+                return 0d;
+            }
+
+            try
+            {
+                Type scoreManager = typeof(SongStorage).Assembly.GetType("MajdataPlay.ScoreManager");
+                if (scoreManager == null)
+                {
+                    return 0d;
+                }
+
+                MethodInfo getSongScores = scoreManager.GetMethod("GetSongScores", StaticFlags);
+                if (getSongScores == null)
+                {
+                    return 0d;
+                }
+
+                object scores = getSongScores.Invoke(null, new object[] { song });
+                object score = scores == null ? null : GetMemberValue(scores, scorePropertyName);
+                object accurate = score == null ? null : GetMemberValue(score, "Acc");
+                string accuracyMember = IsClassicJudgeMode() ? "Classic" : "DX";
+                double accuracy;
+                return TryDouble(GetMemberValue(accurate, accuracyMember), out accuracy) ? accuracy : 0d;
+            }
+            catch
+            {
+                return 0d;
+            }
+        }
+
+        private static bool IsClassicJudgeMode()
+        {
+            try
+            {
+                Type majEnv = typeof(SongStorage).Assembly.GetType("MajdataPlay.MajEnv");
+                PropertyInfo settingsProperty = majEnv == null ? null : majEnv.GetProperty("Settings", StaticFlags);
+                object settings = settingsProperty == null ? null : settingsProperty.GetValue(null, null);
+                object judge = GetMemberValue(settings, "Judge");
+                object mode = GetMemberValue(judge, "Mode");
+                return string.Equals(Convert.ToString(mode, CultureInfo.InvariantCulture), "Classic", StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static SongCollection[] CollectionForDifficulty(
+            int selectedDifficulty,
+            SongCollection[] easyCollections,
+            SongCollection[] basicCollections,
+            SongCollection[] advanceCollections,
+            SongCollection[] expertCollections,
+            SongCollection[] masterCollections,
+            SongCollection[] reMasterCollections,
+            SongCollection[] utageCollections)
+        {
+            switch ((ChartLevel)selectedDifficulty)
+            {
+                case ChartLevel.Easy:
+                    return easyCollections;
+                case ChartLevel.Basic:
+                    return basicCollections;
+                case ChartLevel.Advance:
+                    return advanceCollections;
+                case ChartLevel.Expert:
+                    return expertCollections;
+                case ChartLevel.Master:
+                    return masterCollections;
+                case ChartLevel.ReMaster:
+                    return reMasterCollections;
+                case ChartLevel.UTAGE:
+                    return utageCollections;
+                default:
+                    return easyCollections;
             }
         }
 
