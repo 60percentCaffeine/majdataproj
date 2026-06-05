@@ -739,10 +739,23 @@ namespace MajdataQolSongListMod
                         .Select(group => new SongCollection(group.Key, group.ToArray()));
                     break;
                 case MapListGroupingMode.Artist:
-                    grouped = songs
-                        .GroupBy(song => string.IsNullOrWhiteSpace(song.Artist) ? "Unknown Artist" : song.Artist.Trim())
+                    Dictionary<string, List<ISongDetail>> artistGroups = new Dictionary<string, List<ISongDetail>>(StringComparer.OrdinalIgnoreCase);
+                    foreach (ISongDetail song in songs)
+                    {
+                        string key = string.IsNullOrWhiteSpace(song.Artist) ? "Unknown Artist" : song.Artist.Trim();
+                        List<ISongDetail> groupRows;
+                        if (!artistGroups.TryGetValue(key, out groupRows))
+                        {
+                            groupRows = new List<ISongDetail>();
+                            artistGroups.Add(key, groupRows);
+                        }
+
+                        groupRows.Add(song);
+                    }
+
+                    grouped = artistGroups
                         .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-                        .Select(group => new SongCollection(group.Key, group.ToArray()));
+                        .Select(group => new SongCollection(group.Key, group.Value.ToArray()));
                     break;
                 case MapListGroupingMode.Rank:
                     grouped = songs
