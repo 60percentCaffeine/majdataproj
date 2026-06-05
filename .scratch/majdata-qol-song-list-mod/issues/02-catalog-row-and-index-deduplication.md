@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Catalog row and index deduplication
 
@@ -17,3 +17,7 @@ Add the unified catalog row model and `CatalogIndex` behavior for local and onli
 ## Blocked by
 
 - 01-scaffold-production-mod-and-core-defaults
+
+## Comments
+
+- 2026-06-05: Implemented `CatalogInput`, `CatalogRow`, `CatalogIndex`, levels, source/preferred-playback state, score facets, interaction facets, collection memberships, and hydration state. Local and online rows deduplicate by normalized hash; duplicate local-plus-online rows prefer local playback while retaining online id/uploader/interaction/collection metadata. Verification: `test-unit.ps1` passed 11/11 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.
