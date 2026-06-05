@@ -26,6 +26,11 @@ $References = @(
     Join-Path $ManagedDir "System.dll"
     Join-Path $ManagedDir "System.Core.dll"
     Join-Path $ManagedDir "netstandard.dll"
+    Join-Path $ManagedDir "Assembly-CSharp.dll"
+    Join-Path $ManagedDir "UnityEngine.CoreModule.dll"
+    Join-Path $ManagedDir "UnityEngine.TextRenderingModule.dll"
+    Join-Path $ManagedDir "UnityEngine.UI.dll"
+    Join-Path $ManagedDir "Unity.TextMeshPro.dll"
     Join-Path $MelonLoaderDir "MelonLoader.dll"
     $CoreOutput
 )

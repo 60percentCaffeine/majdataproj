@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Settings bridge and list patches
 
@@ -8,13 +8,13 @@ Connect the pure map-list settings, grouping, sorting, filtering, and virtual fo
 
 ## Acceptance criteria
 
-- [ ] The `Map List` settings group appears before `Game`.
-- [ ] Settings cards expose difficulty filter, sorting, grouping, and downloaded songs filter options with PRD defaults.
-- [ ] Default `Folder` mode preserves current folder list behavior, including existing `All` and `MyFavorites`.
-- [ ] Alternate grouping modes rebuild the folder carousel using grouped virtual collections.
-- [ ] `Random Recommended` appears in every grouping mode and uses the cloud/online icon treatment.
-- [ ] Existing gameplay entry from the list remains functional.
-- [ ] Unit and in-game canary tests cover default behavior and a representative grouping mode.
+- [x] The `Map List` settings group appears before `Game`.
+- [x] Settings cards expose difficulty filter, sorting, grouping, and downloaded songs filter options with PRD defaults.
+- [x] Default `Folder` mode preserves current folder list behavior, including existing `All` and `MyFavorites`.
+- [x] Alternate grouping modes rebuild the folder carousel using grouped virtual collections.
+- [x] `Random Recommended` appears in every grouping mode and uses the cloud/online icon treatment.
+- [x] Existing gameplay entry from the list remains functional.
+- [x] Unit and in-game canary tests cover default behavior and a representative grouping mode.
 
 ## Blocked by
 
