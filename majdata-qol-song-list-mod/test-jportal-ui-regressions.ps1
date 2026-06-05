@@ -843,6 +843,18 @@ function Run-JportalUiSnapshot {
     Start-Sleep -Seconds 3
     $afterDifficulty = Read-VisibleGameState
     $screenshots.Add((Capture-JportalScreenshot $Label "03-difficulty-change" "JPORTAL after changing difficulty." $afterDifficulty)) | Out-Null
+    $afterDifficultySelectedSong = $afterDifficulty.songSelect.selected.song
+    $afterDifficultyCarousel = $afterDifficulty.songSelect.carousel
+    $afterDifficultySelectedElement = $afterDifficultyCarousel.selectedElement
+    $afterDifficultyDisplaySong = $afterDifficultySelectedElement.display.song
+    Add-Case $cases "selected carousel song stays in sync after difficulty change" (
+        $afterDifficulty.ok -and $difficulty.result.properties.ok -and
+        $afterDifficulty.screen.selecting -eq "songs" -and
+        $afterDifficulty.songSelect.center.title -eq $afterDifficultySelectedSong.title -and
+        $afterDifficulty.songSelect.center.image.matchesSelectedSongCachedCover -and
+        $afterDifficultySelectedSong.hash -eq $afterDifficultySelectedElement.binding.song.hash -and
+        $afterDifficultySelectedSong.hash -eq $afterDifficultyDisplaySong.hash
+    ) "selected=$($afterDifficultySelectedSong.title)/$($afterDifficultySelectedSong.hash); centerTitle=$($afterDifficulty.songSelect.center.title); centerImageMatchesSelected=$($afterDifficulty.songSelect.center.image.matchesSelectedSongCachedCover); carouselIndex=$($afterDifficultyCarousel.selectedIndex); binding=$($afterDifficultySelectedElement.binding.song.title)/$($afterDifficultySelectedElement.binding.song.hash); display=$($afterDifficultyDisplaySong.title)/$($afterDifficultyDisplaySong.hash); visibleSongs=$($afterDifficultyCarousel.debug.visibleSongRows)"
     $scrollAfterDifficulty = Invoke-JportalAction -Action Scroll
     Start-Sleep -Seconds 8
     $afterDifficultyScroll = Read-VisibleGameState
@@ -850,7 +862,18 @@ function Run-JportalUiSnapshot {
     $difficultyOk = [bool]$difficulty.result.properties.ok
     $scrollAfterDifficultyOk = [bool]$scrollAfterDifficulty.result.properties.ok
     $afterDifficultyScrollCarousel = $afterDifficultyScroll.songSelect.carousel
+    $afterDifficultyScrollSelectedSong = $afterDifficultyScroll.songSelect.selected.song
+    $afterDifficultyScrollSelectedElement = $afterDifficultyScrollCarousel.selectedElement
+    $afterDifficultyScrollDisplaySong = $afterDifficultyScrollSelectedElement.display.song
     $afterDifficultyScrollDiagnostics = $afterDifficultyScrollCarousel.diagnostics
+    Add-Case $cases "selected carousel song stays in sync after difficulty change and scroll" (
+        $afterDifficultyScroll.ok -and $scrollAfterDifficultyOk -and
+        $afterDifficultyScroll.screen.selecting -eq "songs" -and
+        $afterDifficultyScroll.songSelect.center.title -eq $afterDifficultyScrollSelectedSong.title -and
+        $afterDifficultyScroll.songSelect.center.image.matchesSelectedSongCachedCover -and
+        $afterDifficultyScrollSelectedSong.hash -eq $afterDifficultyScrollSelectedElement.binding.song.hash -and
+        $afterDifficultyScrollSelectedSong.hash -eq $afterDifficultyScrollDisplaySong.hash
+    ) "selected=$($afterDifficultyScrollSelectedSong.title)/$($afterDifficultyScrollSelectedSong.hash); centerTitle=$($afterDifficultyScroll.songSelect.center.title); centerImageMatchesSelected=$($afterDifficultyScroll.songSelect.center.image.matchesSelectedSongCachedCover); carouselIndex=$($afterDifficultyScrollCarousel.selectedIndex); binding=$($afterDifficultyScrollSelectedElement.binding.song.title)/$($afterDifficultyScrollSelectedElement.binding.song.hash); display=$($afterDifficultyScrollDisplaySong.title)/$($afterDifficultyScrollDisplaySong.hash); visibleSongs=$($afterDifficultyScrollCarousel.debug.visibleSongRows)"
     Add-Case $cases "visible carousel covers are not stale or duplicated after difficulty change and scroll" (
         $afterDifficultyScroll.ok -and $difficultyOk -and $scrollAfterDifficultyOk -and
         $afterDifficultyScroll.screen.selecting -eq "songs" -and
