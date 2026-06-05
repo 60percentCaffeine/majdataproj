@@ -97,12 +97,84 @@ namespace MajdataQolSongListMod.Core
             return items.Select(ConvertChartListItem).ToArray();
         }
 
+        public IReadOnlyList<WebsiteCollectionSummary> ConvertCollectionListJson(string json, WebsiteCollectionKind kind)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new WebsiteCollectionSummary[0];
+            }
+
+            MajdataNetCollectionListItem[] items = DeserializeCollectionList(json);
+            return items.Select(item => new WebsiteCollectionSummary(
+                FirstNonBlank(item.Id, item.IdStr),
+                item.Name,
+                item.Description,
+                kind,
+                item.Visibility,
+                item.TotalCount ?? item.Count)).ToArray();
+        }
+
+        public IReadOnlyList<string> ConvertCollectionHashListJson(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new string[0];
+            }
+
+            string[] hashes;
+            if (TryDeserializeStringArray(json, out hashes))
+            {
+                return hashes.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+            }
+
+            MajdataNetCollectionHashListItem[] items = DeserializeCollectionHashList(json);
+            return items.Select(item => FirstNonBlank(item.Hash, item.ChartHash))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .ToArray();
+        }
+
         private static MajdataNetChartListItem[] DeserializeChartList(string json)
         {
             DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(MajdataNetChartListItem[]));
             using (MemoryStream stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
             {
                 return (MajdataNetChartListItem[])serializer.ReadObject(stream);
+            }
+        }
+
+        private static MajdataNetCollectionListItem[] DeserializeCollectionList(string json)
+        {
+            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(MajdataNetCollectionListItem[]));
+            using (MemoryStream stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+            {
+                return (MajdataNetCollectionListItem[])serializer.ReadObject(stream);
+            }
+        }
+
+        private static MajdataNetCollectionHashListItem[] DeserializeCollectionHashList(string json)
+        {
+            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(MajdataNetCollectionHashListItem[]));
+            using (MemoryStream stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+            {
+                return (MajdataNetCollectionHashListItem[])serializer.ReadObject(stream);
+            }
+        }
+
+        private static bool TryDeserializeStringArray(string json, out string[] values)
+        {
+            try
+            {
+                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(string[]));
+                using (MemoryStream stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+                {
+                    values = (string[])serializer.ReadObject(stream);
+                    return true;
+                }
+            }
+            catch
+            {
+                values = null;
+                return false;
             }
         }
 
@@ -165,6 +237,19 @@ namespace MajdataQolSongListMod.Core
             if (DateTimeOffset.TryParse(timestamp, out parsed))
             {
                 return parsed;
+            }
+
+            return null;
+        }
+
+        private static string FirstNonBlank(params string[] values)
+        {
+            foreach (string value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
             }
 
             return null;
@@ -296,5 +381,40 @@ namespace MajdataQolSongListMod.Core
 
         [DataMember(Name = "publicTags")]
         public string[] PublicTags { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class MajdataNetCollectionListItem
+    {
+        [DataMember(Name = "id")]
+        public string Id { get; set; }
+
+        [DataMember(Name = "idStr")]
+        public string IdStr { get; set; }
+
+        [DataMember(Name = "name")]
+        public string Name { get; set; }
+
+        [DataMember(Name = "description")]
+        public string Description { get; set; }
+
+        [DataMember(Name = "visibility")]
+        public int? Visibility { get; set; }
+
+        [DataMember(Name = "totalCount")]
+        public int? TotalCount { get; set; }
+
+        [DataMember(Name = "count")]
+        public int? Count { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class MajdataNetCollectionHashListItem
+    {
+        [DataMember(Name = "hash")]
+        public string Hash { get; set; }
+
+        [DataMember(Name = "chartHash")]
+        public string ChartHash { get; set; }
     }
 }

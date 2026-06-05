@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Website collection resolution
 
@@ -18,3 +18,7 @@ Support website collection summaries and hash-list contents as virtual folders. 
 
 - 02-catalog-row-and-index-deduplication
 - 06-majdatanet-adapter-and-random-recommend
+
+## Comments
+
+- 2026-06-05: Implemented website collection summary/hash-list DTO conversion and `WebsiteCollectionResolver`. Collection hashes now resolve against the unified catalog for local-only, online-only, and duplicate local-plus-online rows; unresolved entries are omitted from playable rows but reflected in resolved/total counts; downloaded-only and online-only scopes filter rows cleanly. Verification: `test-unit.ps1` passed 65/65 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.
