@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # MajdataNet adapter and Random Recommend fetch
 
@@ -18,3 +18,7 @@ Add `MajdataNetAdapter` for public chart-list DTO conversion and implement rando
 ## Blocked by
 
 - 02-catalog-row-and-index-deduplication
+
+## Comments
+
+- 2026-06-05: Implemented `MajdataNetAdapter`, `ITextFetcher`/`HttpTextFetcher`, recoverable `MajdataNetResult<T>`, and `RandomRecommendationService`. The adapter converts representative public `/api/maichart/list` JSON into online catalog inputs, fetches the unauthenticated chart-list endpoint, builds deterministic random recommendation batches from online rows, treats network failures as recoverable, and supports configured local fallback batches. Verification: `test-unit.ps1` passed 59/59 tests; `build.ps1` passed; `install.ps1` installed the updated mod/core DLLs.
