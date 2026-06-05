@@ -277,6 +277,48 @@ if (-not (($metadata.text -like "* | *") -and ($metadata.text -like "* diffs | *
     throw "Smoke failed: metadata line did not match expected format. Text: $($metadata.text)"
 }
 
+$folderMetadataResult = Invoke-GameEval @"
+new Func<object>(() => {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList == null) {
+        return new { ok = false, active = true, text = "", snapshot = "", error = "Active CoverListDisplayer was not found." };
+    }
+
+    coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+    bridgeType.GetMethod("PatchSelectedSongMetadataLine", Flags).Invoke(bridge, new object[0]);
+    Type bigType = Type.GetType("MajdataPlay.Scenes.List.CoverBigDisplayer, Assembly-CSharp", true);
+    UnityEngine.Component big = UnityEngine.Resources.FindObjectsOfTypeAll(bigType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    TMPro.TMP_Text line = big == null ? null : big.GetComponentsInChildren<TMPro.TMP_Text>(true)
+        .FirstOrDefault(t => t != null && t.gameObject != null && t.gameObject.name == "QoLSelectedSongMetadataLine");
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    bool active = line != null && line.gameObject.activeInHierarchy;
+    string text = line == null ? "" : line.text;
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    return new {
+        ok = true,
+        active = active,
+        text = text,
+        snapshot = snapshot,
+        error = ""
+    };
+})()
+"@
+$folderMetadata = $folderMetadataResult.result.properties
+if (-not $folderMetadata.ok -or $folderMetadata.active -or ($folderMetadata.snapshot -like "*BPM*") -or ($folderMetadata.snapshot -like "*diffs*")) {
+    throw "Smoke failed: folder mode kept selected-song metadata visible. Active=$($folderMetadata.active) Text=$($folderMetadata.text) Snapshot=$($folderMetadata.snapshot) Error=$($folderMetadata.error)"
+}
+
 $hydratedMetadataPrepareResult = Invoke-GameEval @"
 new Func<object>(() => {
     Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
@@ -320,6 +362,194 @@ if (-not (($hydratedMetadata.snapshot -like "*02:34*") -and ($hydratedMetadata.s
 }
 if ($hydratedMetadata.afterCollections -ne $hydratedMetadataPrepare.beforeCollections -or $hydratedMetadata.afterCollectionIndex -ne $hydratedMetadataPrepare.beforeCollectionIndex -or $hydratedMetadata.afterHash -ne $hydratedMetadataPrepare.beforeHash) {
     throw "Smoke failed: hydrated metadata changed list collections or cursor. Before=$($hydratedMetadataPrepare.beforeCollections) After=$($hydratedMetadata.afterCollections) BeforeIndex=$($hydratedMetadataPrepare.beforeCollectionIndex) AfterIndex=$($hydratedMetadata.afterCollectionIndex) BeforeHash=$($hydratedMetadataPrepare.beforeHash) AfterHash=$($hydratedMetadata.afterHash)"
+}
+
+$perDifficultyBpmPrepareResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    bridgeType.GetMethod("ClearSelectedSongMetadataForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList == null) {
+        throw new Exception("Active CoverListDisplayer was not found.");
+    }
+
+    var collections = MajdataPlay.SongStorage.Collections;
+    int collectionIndex = -1;
+    int songIndex = -1;
+    string expectedBpm = "";
+    for (int i = 0; i < collections.Length; i++) {
+        var collection = collections[i];
+        if (collection == null) {
+            continue;
+        }
+
+        for (int j = 0; j < collection.Count; j++) {
+            var song = collection[j];
+            if (song == null || song.IsOnline) {
+                continue;
+            }
+
+            var levels = song.Levels.ToArray();
+            if (levels.Length > 1 && string.IsNullOrWhiteSpace(levels[0]) && !string.IsNullOrWhiteSpace(levels[1])) {
+                var pathField = song.GetType().GetField("_maidataPath", Flags);
+                string path = pathField == null ? "" : (pathField.GetValue(song) as string);
+                if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) {
+                    continue;
+                }
+
+                string maidata = System.IO.File.ReadAllText(path);
+                if (!new System.Text.RegularExpressions.Regex(@"(?m)^&inote_1=\s*$").IsMatch(maidata)) {
+                    continue;
+                }
+
+                var bpmMatch = new System.Text.RegularExpressions.Regex(@"(?m)^&inote_2=\((?<bpm>[0-9]+(?:\.[0-9]+)?)\)").Match(maidata);
+                if (!bpmMatch.Success) {
+                    continue;
+                }
+
+                collectionIndex = i;
+                songIndex = j;
+                expectedBpm = bpmMatch.Groups["bpm"].Value + "BPM";
+                break;
+            }
+        }
+
+        if (collectionIndex >= 0) {
+            break;
+        }
+    }
+
+    if (collectionIndex < 0 || songIndex < 0) {
+        throw new Exception("Per-difficulty BPM canary chart was not found.");
+    }
+
+    MajdataPlay.SongStorage.CollectionIndex = collectionIndex;
+    collections[collectionIndex].Index = songIndex;
+    coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+    var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { collectionIndex });
+    }
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { songIndex });
+    }
+    coverListType.GetMethod("SlideToDifficulty", Flags).Invoke(coverList, new object[] { 0 });
+    bridgeType.GetMethod("PatchSelectedSongMetadataLine", Flags).Invoke(bridge, new object[0]);
+
+    return new { ok = true, collection = collections[collectionIndex].Name, song = collections[collectionIndex][songIndex].Title, expectedBpm = expectedBpm, error = "" };
+    } catch (Exception ex) {
+        return new { ok = false, collection = "", song = "", expectedBpm = "", error = ex.ToString() };
+    }
+})()
+"@
+$perDifficultyBpmPrepare = $perDifficultyBpmPrepareResult.result.properties
+if (-not $perDifficultyBpmPrepare.ok) {
+    throw "Smoke failed: could not prepare per-difficulty BPM canary. $($perDifficultyBpmPrepare.error)"
+}
+
+Start-Sleep -Seconds 4
+
+$perDifficultyBpmEmptyResult = Invoke-GameEval @"
+new Func<object>(() => {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    bridgeType.GetMethod("PatchSelectedSongMetadataLine", Flags).Invoke(bridge, new object[0]);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    return new { snapshot = snapshot };
+})()
+"@
+$perDifficultyBpmEmpty = $perDifficultyBpmEmptyResult.result.properties
+
+$perDifficultyBpmSwitchResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList == null) {
+        throw new Exception("Active CoverListDisplayer was not found.");
+    }
+
+    coverListType.GetMethod("SlideToDifficulty", Flags).Invoke(coverList, new object[] { 1 });
+    bridgeType.GetMethod("PatchSelectedSongMetadataLine", Flags).Invoke(bridge, new object[0]);
+    return new { ok = true, error = "" };
+    } catch (Exception ex) {
+        return new { ok = false, error = ex.ToString() };
+    }
+})()
+"@
+$perDifficultyBpmSwitch = $perDifficultyBpmSwitchResult.result.properties
+if (-not $perDifficultyBpmSwitch.ok) {
+    throw "Smoke failed: could not switch per-difficulty BPM canary. $($perDifficultyBpmSwitch.error)"
+}
+
+Start-Sleep -Seconds 6
+
+$perDifficultyBpmPlayableResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    object bridge = bridgeType.GetProperty("Active").GetValue(null, null);
+    bridgeType.GetMethod("PatchSelectedSongMetadataLine", Flags).Invoke(bridge, new object[0]);
+    string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    UnityEngine.Component coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    var song = coverList == null ? null : coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
+    var selectedDifficultyField = coverListType.GetField("selectedDifficulty", Flags);
+    int selectedDifficulty = coverList == null || selectedDifficultyField == null ? -1 : (int)selectedDifficultyField.GetValue(coverList);
+    string path = "";
+    string rawBpm = "";
+    if (song != null) {
+        var pathField = song.GetType().GetField("_maidataPath", Flags);
+        path = pathField == null ? "" : (pathField.GetValue(song) as string);
+        if (!string.IsNullOrWhiteSpace(path) && System.IO.File.Exists(path)) {
+            string maidata = System.IO.File.ReadAllText(path);
+            rawBpm = MajdataQolSongListMod.Core.ChartDataHydrator.FormatBpm(new MajdataQolSongListMod.Core.ChartDataHydrator(new MajdataQolSongListMod.Core.HttpTextFetcher(), "https://majdata.net").CalculateBpmFromMaidata(maidata, selectedDifficulty));
+        }
+    }
+    return new { snapshot = snapshot, selectedDifficulty = selectedDifficulty, selectedSong = song == null ? "" : song.Title, path = path, rawBpm = rawBpm, error = "" };
+    } catch (Exception ex) {
+        Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+        string snapshot = (string)bridgeType.GetMethod("UiDiagnosticsSnapshot").Invoke(null, null);
+        return new { snapshot = snapshot, selectedDifficulty = -1, selectedSong = "", path = "", rawBpm = "", error = ex.ToString() };
+    }
+})()
+"@
+$perDifficultyBpmPlayable = $perDifficultyBpmPlayableResult.result.properties
+if (-not ($perDifficultyBpmEmpty.snapshot -like "*unknown BPM*") -or -not ($perDifficultyBpmPlayable.snapshot -like "*$($perDifficultyBpmPrepare.expectedBpm)*")) {
+    throw "Smoke failed: selected-song BPM was not recalculated per difficulty. Chart=$($perDifficultyBpmPrepare.collection)/$($perDifficultyBpmPrepare.song) Expected=$($perDifficultyBpmPrepare.expectedBpm) Empty=$($perDifficultyBpmEmpty.snapshot) Playable=$($perDifficultyBpmPlayable.snapshot) SelectedDifficulty=$($perDifficultyBpmPlayable.selectedDifficulty) SelectedSong=$($perDifficultyBpmPlayable.selectedSong) RawBpm=$($perDifficultyBpmPlayable.rawBpm) Path=$($perDifficultyBpmPlayable.path) Error=$($perDifficultyBpmPlayable.error)"
 }
 
 Invoke-GameEval @"
@@ -466,9 +696,10 @@ new Func<object>(() => {
     var all = MajdataPlay.SongStorage.Collections.FirstOrDefault(c => c != null && c.Name == "All");
     var rows = all == null ? new MajdataPlay.ISongDetail[0] : all.ToArray().Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash)).ToArray();
     var local = rows.FirstOrDefault(song => !song.IsOnline);
-    var online = rows.FirstOrDefault(song => song.IsOnline);
+    var localHashes = new HashSet<string>(rows.Where(song => !song.IsOnline).Select(song => song.Hash));
+    var online = rows.FirstOrDefault(song => song.IsOnline && !localHashes.Contains(song.Hash));
     if (local == null || online == null) {
-        throw new Exception("Website collection canary requires both local and online rows.");
+        throw new Exception("Website collection canary requires both local and online-only rows.");
     }
 
     string collectionName = "QoL Website Smoke";
@@ -650,6 +881,93 @@ new Func<object>(() => {
 $sortCanary = $sortCanaryResult.result.properties
 if (-not $sortCanary.ok -or -not $sortCanary.changed -or -not $sortCanary.sorted) {
     throw "Smoke failed: title sorting did not visibly reorder a collection. Collection=$($sortCanary.collection) Original=$($sortCanary.original) Expected=$($sortCanary.expected) Observed=$($sortCanary.observed) Error=$($sortCanary.error)"
+}
+
+$difficultySortSelectionResult = Invoke-GameEval @"
+new Func<object>(() => {
+    try {
+    const System.Reflection.BindingFlags Flags =
+        System.Reflection.BindingFlags.Public |
+        System.Reflection.BindingFlags.NonPublic |
+        System.Reflection.BindingFlags.Instance;
+    Type bridgeType = Type.GetType("MajdataQolSongListMod.QolRuntimeBridge, MajdataQolSongListMod", true);
+    Action apply = () => bridgeType.GetMethod("ApplySettingsForDiagnostics").Invoke(null, null);
+    bridgeType.GetMethod("SetGroupingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Default" });
+    bridgeType.GetMethod("SetDifficultyFilterForDiagnostics").Invoke(null, new object[] { "No" });
+    bridgeType.GetMethod("SetDownloadedSongsFilterForDiagnostics").Invoke(null, new object[] { "Mixed" });
+    apply();
+
+    var collections = MajdataPlay.SongStorage.Collections;
+    int collectionIndex = Array.FindIndex(collections, collection => collection != null && collection.Name != "All" && collection.Name != "MyFavorites" && collection.Name != "Random Recommended" && collection.Count >= 5);
+    if (collectionIndex < 0) {
+        throw new Exception("No real folder with at least five songs was available.");
+    }
+
+    MajdataPlay.SongStorage.CollectionIndex = collectionIndex;
+    collections[collectionIndex].Index = 0;
+    Type coverListType = Type.GetType("MajdataPlay.Scenes.List.CoverListDisplayer, Assembly-CSharp", true);
+    object coverList = UnityEngine.Resources.FindObjectsOfTypeAll(coverListType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    if (coverList == null) {
+        throw new Exception("Active CoverListDisplayer was not found.");
+    }
+
+    coverListType.GetMethod("SwitchToDirList", Flags).Invoke(coverList, new object[0]);
+    var slide = coverListType.GetMethod("SlideListInternal", Flags);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { collectionIndex });
+    }
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { 0 });
+    }
+
+    bridgeType.GetMethod("SetSortingModeForDiagnostics").Invoke(null, new object[] { "Difficulty" });
+    apply();
+    coverListType.GetMethod("SwitchToSongList", Flags).Invoke(coverList, new object[0]);
+    if (slide != null) {
+        slide.Invoke(coverList, new object[] { 0 });
+    }
+
+    var selectedSong = coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
+    var currentCollection = coverListType.GetField("_currentCollection", Flags).GetValue(coverList) as MajdataPlay.Collections.SongCollection;
+    Type bigType = Type.GetType("MajdataPlay.Scenes.List.CoverBigDisplayer, Assembly-CSharp", true);
+    object big = UnityEngine.Resources.FindObjectsOfTypeAll(bigType)
+        .OfType<UnityEngine.Component>()
+        .FirstOrDefault(c => c != null && c.gameObject != null && c.gameObject.activeInHierarchy);
+    TMPro.TMP_Text centerTitleText = big == null ? null : bigType.GetField("_title", Flags).GetValue(big) as TMPro.TMP_Text;
+    object bindingMemory = coverListType.GetField("_songDetailBindings", Flags).GetValue(coverList);
+    int bindingLength = (int)bindingMemory.GetType().GetProperty("Length").GetValue(bindingMemory, null);
+    Array bindingArray = bindingLength == 0 ? Array.Empty<object>() : (Array)bindingMemory.GetType().GetMethod("ToArray").Invoke(bindingMemory, null);
+    object firstBinding = bindingArray.Length == 0 ? null : bindingArray.GetValue(0);
+    var bindingSong = firstBinding == null ? null : firstBinding.GetType().GetProperty("SongDetail").GetValue(firstBinding, null) as MajdataPlay.ISongDetail;
+
+    string selectedHash = selectedSong == null ? "" : selectedSong.Hash;
+    string currentHash = currentCollection == null || currentCollection.Count == 0 ? "" : currentCollection.Current.Hash;
+    string bindingHash = bindingSong == null ? "" : bindingSong.Hash;
+    string centerTitle = centerTitleText == null ? "" : centerTitleText.text;
+    return new {
+        ok = true,
+        collection = collections[collectionIndex].Name,
+        selectedTitle = selectedSong == null ? "" : selectedSong.Title,
+        centerTitle = centerTitle,
+        selectedHash = selectedHash,
+        currentHash = currentHash,
+        bindingHash = bindingHash,
+        hashesMatch = selectedHash == currentHash && selectedHash == bindingHash,
+        titleMatches = selectedSong != null && centerTitle == selectedSong.Title,
+        error = ""
+    };
+    } catch (Exception ex) {
+        return new { ok = false, collection = "", selectedTitle = "", centerTitle = "", selectedHash = "", currentHash = "", bindingHash = "", hashesMatch = false, titleMatches = false, error = ex.ToString() };
+    }
+})()
+"@
+$difficultySortSelection = $difficultySortSelectionResult.result.properties
+if (-not $difficultySortSelection.ok -or -not $difficultySortSelection.hashesMatch -or -not $difficultySortSelection.titleMatches) {
+    throw "Smoke failed: difficulty sort left folder list and center song mismatched. Collection=$($difficultySortSelection.collection) Selected=$($difficultySortSelection.selectedTitle) Center=$($difficultySortSelection.centerTitle) SelectedHash=$($difficultySortSelection.selectedHash) CurrentHash=$($difficultySortSelection.currentHash) BindingHash=$($difficultySortSelection.bindingHash) Error=$($difficultySortSelection.error)"
 }
 
 $difficultyFilterResult = Invoke-GameEval @"

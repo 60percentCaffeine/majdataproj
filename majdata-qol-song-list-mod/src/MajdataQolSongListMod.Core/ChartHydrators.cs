@@ -13,6 +13,8 @@ namespace MajdataQolSongListMod.Core
     public sealed class ChartDataHydrator
     {
         private static readonly Regex BpmRegex = new Regex(@"\(\s*(?<bpm>[0-9]+(?:\.[0-9]+)?)\s*\)", RegexOptions.Compiled);
+        private static readonly Regex WholeBpmRegex = new Regex(@"(?im)^\s*&wholebpm\s*=\s*(?<value>[^\r\n]*)", RegexOptions.Compiled);
+        private static readonly Regex NumberRegex = new Regex(@"[0-9]+(?:\.[0-9]+)?", RegexOptions.Compiled);
         private readonly ITextFetcher _textFetcher;
         private readonly string _baseUrl;
 
@@ -30,7 +32,30 @@ namespace MajdataQolSongListMod.Core
                 return BpmFacet.Unknown();
             }
 
-            return BpmFacet.KnownRange(bpms.Min(), bpms.Max());
+            return KnownRange(bpms);
+        }
+
+        public BpmFacet CalculateBpmFromMaidata(string maidata, int selectedDifficulty)
+        {
+            string chartText = ExtractDifficultyChartText(maidata, selectedDifficulty);
+            decimal[] chartBpms = ExtractInlineBpmValues(chartText).ToArray();
+            if (chartBpms.Length > 0)
+            {
+                return KnownRange(chartBpms);
+            }
+
+            if (string.IsNullOrWhiteSpace(chartText))
+            {
+                return BpmFacet.Unknown();
+            }
+
+            decimal[] wholeBpms = ExtractWholeBpmValues(maidata).ToArray();
+            if (wholeBpms.Length > 0)
+            {
+                return KnownRange(wholeBpms);
+            }
+
+            return BpmFacet.Unknown();
         }
 
         public MajdataNetResult<BpmFacet> HydrateOnlineBpm(CatalogRow row, bool queued)
@@ -88,7 +113,34 @@ namespace MajdataQolSongListMod.Core
                 yield break;
             }
 
-            MatchCollection matches = BpmRegex.Matches(maidata);
+            foreach (decimal bpm in ExtractWholeBpmValues(maidata))
+            {
+                yield return bpm;
+            }
+
+            foreach (decimal bpm in ExtractInlineBpmValues(maidata))
+            {
+                yield return bpm;
+            }
+        }
+
+        private static IEnumerable<decimal> ExtractWholeBpmValues(string maidata)
+        {
+            Match wholeBpm = WholeBpmRegex.Match(maidata ?? string.Empty);
+            if (!wholeBpm.Success)
+            {
+                yield break;
+            }
+
+            foreach (decimal bpm in ParsePositiveNumbers(wholeBpm.Groups["value"].Value))
+            {
+                yield return bpm;
+            }
+        }
+
+        private static IEnumerable<decimal> ExtractInlineBpmValues(string maidata)
+        {
+            MatchCollection matches = BpmRegex.Matches(maidata ?? string.Empty);
             foreach (Match match in matches)
             {
                 decimal bpm;
@@ -97,6 +149,58 @@ namespace MajdataQolSongListMod.Core
                     yield return bpm;
                 }
             }
+        }
+
+        private static string ExtractDifficultyChartText(string maidata, int selectedDifficulty)
+        {
+            if (string.IsNullOrWhiteSpace(maidata) || selectedDifficulty < 0)
+            {
+                return string.Empty;
+            }
+
+            string key = "&inote_" + (selectedDifficulty + 1).ToString(CultureInfo.InvariantCulture);
+            int start = maidata.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                return string.Empty;
+            }
+
+            int valueStart = maidata.IndexOf('=', start);
+            if (valueStart < 0)
+            {
+                return string.Empty;
+            }
+
+            int nextField = maidata.IndexOf("\n&", valueStart, StringComparison.Ordinal);
+            return nextField < 0
+                ? maidata.Substring(valueStart + 1)
+                : maidata.Substring(valueStart + 1, nextField - valueStart - 1);
+        }
+
+        private static IEnumerable<decimal> ParsePositiveNumbers(string value)
+        {
+            MatchCollection matches = NumberRegex.Matches(value ?? string.Empty);
+            foreach (Match match in matches)
+            {
+                decimal bpm;
+                if (decimal.TryParse(match.Value, NumberStyles.Number, CultureInfo.InvariantCulture, out bpm) && bpm > 0m)
+                {
+                    yield return bpm;
+                }
+            }
+        }
+
+        private static BpmFacet KnownRange(decimal[] values)
+        {
+            decimal minimum = values[0];
+            decimal maximum = values[0];
+            for (int i = 1; i < values.Length; i++)
+            {
+                minimum = Math.Min(minimum, values[i]);
+                maximum = Math.Max(maximum, values[i]);
+            }
+
+            return BpmFacet.KnownRange(minimum, maximum);
         }
 
         private static string FormatDecimal(decimal value)

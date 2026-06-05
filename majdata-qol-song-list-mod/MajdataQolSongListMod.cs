@@ -339,17 +339,32 @@ namespace MajdataQolSongListMod
                 return false;
             }
 
-            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            CoverListDisplayer list = ActiveCoverListDisplayer();
             ISongDetail song = list == null ? null : list.SelectedSong;
             if (song == null || string.IsNullOrWhiteSpace(song.Hash))
             {
                 return false;
             }
 
-            Active.SetSelectedSongMetadata(song.Hash, new SelectedSongRuntimeMetadata(
+            Active.SetSelectedSongMetadata(song.Hash, SelectedDifficultyIndex(), new SelectedSongRuntimeMetadata(
                 string.IsNullOrWhiteSpace(length) ? "--:--" : length.Trim(),
                 ParseDiagnosticBpm(bpm),
                 false));
+            return true;
+        }
+
+        public static bool ClearSelectedSongMetadataForDiagnostics()
+        {
+            if (Active == null)
+            {
+                return false;
+            }
+
+            lock (Active._selectedSongMetadataLock)
+            {
+                Active._selectedSongMetadata.Clear();
+            }
+
             return true;
         }
 
@@ -1486,7 +1501,7 @@ namespace MajdataQolSongListMod
         {
             try
             {
-                CoverListDisplayer displayer = Object.FindObjectOfType<CoverListDisplayer>();
+                CoverListDisplayer displayer = ActiveCoverListDisplayer();
                 if (displayer != null)
                 {
                     return displayer.selectedDifficulty;
@@ -1519,10 +1534,15 @@ namespace MajdataQolSongListMod
                 return;
             }
 
-            CoverListDisplayer displayer = Object.FindObjectOfType<CoverListDisplayer>();
+            CoverListDisplayer displayer = ActiveCoverListDisplayer();
             if (displayer == null)
             {
                 return;
+            }
+
+            if (SongStorage.CollectionIndex >= collections.Length)
+            {
+                SongStorage.CollectionIndex = 0;
             }
 
             SetPrivateField(displayer, "_collections", new ReadOnlyMemory<SongCollection>(collections));
@@ -1534,6 +1554,11 @@ namespace MajdataQolSongListMod
             SetPrivateField(displayer, "_reMasterSortedCollections", collections);
             SetPrivateField(displayer, "_utageSortedCollections", collections);
             SetPrivateField(displayer, "_currentCollection", collections[SongStorage.CollectionIndex]);
+
+            if (displayer.IsChartList)
+            {
+                displayer.SwitchToSongList();
+            }
         }
 
         private void PatchRandomRecommendedTiles()
@@ -1579,9 +1604,10 @@ namespace MajdataQolSongListMod
 
         private void PatchSelectedSongMetadataLine()
         {
-            CoverListDisplayer list = Object.FindObjectOfType<CoverListDisplayer>();
+            CoverListDisplayer list = ActiveCoverListDisplayer();
             if (list == null || !list.IsChartList)
             {
+                HideSelectedSongMetadataLine();
                 return;
             }
 
@@ -1615,7 +1641,7 @@ namespace MajdataQolSongListMod
             string source = SourceLabel(list.SelectedCollection, song);
             int difficultyCount = CountDifficulties(song);
             int selectedDifficulty = SelectedDifficultyIndex();
-            SelectedSongRuntimeMetadata runtimeMetadata = GetSelectedSongMetadata(song);
+            SelectedSongRuntimeMetadata runtimeMetadata = GetSelectedSongMetadata(song, selectedDifficulty);
             if (runtimeMetadata == null || runtimeMetadata.ShouldHydrate)
             {
                 QueueSelectedSongMetadataHydration(song, selectedDifficulty);
@@ -1657,6 +1683,26 @@ namespace MajdataQolSongListMod
             line.text = text;
             line.gameObject.SetActive(true);
             _lastMetadataLine = text;
+        }
+
+        private void HideSelectedSongMetadataLine()
+        {
+            CoverBigDisplayer big = Object.FindObjectOfType<CoverBigDisplayer>();
+            if (big == null)
+            {
+                return;
+            }
+
+            TMP_Text[] texts = big.GetComponentsInChildren<TMP_Text>(true);
+            foreach (TMP_Text text in texts)
+            {
+                if (text != null && text.gameObject != null && text.gameObject.name == MetadataLineName)
+                {
+                    text.gameObject.SetActive(false);
+                    _lastMetadataLine = string.Empty;
+                    return;
+                }
+            }
         }
 
         private TextMeshProUGUI GetOrCreateMetadataLine(TMP_Text charter)
@@ -1738,31 +1784,38 @@ namespace MajdataQolSongListMod
             _statusOverlay.Show(message, idleSeconds);
         }
 
-        private SelectedSongRuntimeMetadata GetSelectedSongMetadata(ISongDetail song)
+        private SelectedSongRuntimeMetadata GetSelectedSongMetadata(ISongDetail song, int selectedDifficulty)
         {
             if (song == null || string.IsNullOrWhiteSpace(song.Hash))
             {
                 return null;
             }
 
+            string key = SelectedSongMetadataKey(song.Hash, selectedDifficulty);
             lock (_selectedSongMetadataLock)
             {
                 SelectedSongRuntimeMetadata metadata;
-                return _selectedSongMetadata.TryGetValue(song.Hash, out metadata) ? metadata : null;
+                return _selectedSongMetadata.TryGetValue(key, out metadata) ? metadata : null;
             }
         }
 
-        private void SetSelectedSongMetadata(string hash, SelectedSongRuntimeMetadata metadata)
+        private void SetSelectedSongMetadata(string hash, int selectedDifficulty, SelectedSongRuntimeMetadata metadata)
         {
             if (string.IsNullOrWhiteSpace(hash) || metadata == null)
             {
                 return;
             }
 
+            string key = SelectedSongMetadataKey(hash, selectedDifficulty);
             lock (_selectedSongMetadataLock)
             {
-                _selectedSongMetadata[hash] = metadata;
+                _selectedSongMetadata[key] = metadata;
             }
+        }
+
+        private static string SelectedSongMetadataKey(string hash, int selectedDifficulty)
+        {
+            return hash + "|diff:" + selectedDifficulty.ToString(CultureInfo.InvariantCulture);
         }
 
         private void QueueSelectedSongMetadataHydration(ISongDetail song, int selectedDifficulty)
@@ -1773,15 +1826,16 @@ namespace MajdataQolSongListMod
             }
 
             string hash = song.Hash;
+            string key = SelectedSongMetadataKey(hash, selectedDifficulty);
             lock (_selectedSongMetadataLock)
             {
                 SelectedSongRuntimeMetadata existing;
-                if (_selectedSongMetadata.TryGetValue(hash, out existing) && !existing.ShouldHydrate)
+                if (_selectedSongMetadata.TryGetValue(key, out existing) && !existing.ShouldHydrate)
                 {
                     return;
                 }
 
-                _selectedSongMetadata[hash] = new SelectedSongRuntimeMetadata(
+                _selectedSongMetadata[key] = new SelectedSongRuntimeMetadata(
                     existing == null ? "--:--" : existing.Length,
                     existing == null ? BpmFacet.Pending() : existing.Bpm,
                     true);
@@ -1817,7 +1871,7 @@ namespace MajdataQolSongListMod
                 }
             }
 
-            SetSelectedSongMetadata(hash, new SelectedSongRuntimeMetadata(length, bpm, false));
+            SetSelectedSongMetadata(hash, selectedDifficulty, new SelectedSongRuntimeMetadata(length, bpm, false));
         }
 
         private static string ResolveSongLength(ISongDetail song, CancellationToken token)
@@ -1839,11 +1893,23 @@ namespace MajdataQolSongListMod
 
         private static BpmFacet ResolveSongBpm(ISongDetail song, int selectedDifficulty, CancellationToken token)
         {
-            object maidata = InvokeValueTaskResult(song, "GetMaidataAsync", new object[] { false, null, token });
-            BpmFacet parsed = ExtractBpmFromMaidata(maidata, selectedDifficulty);
-            if (parsed != null && parsed.HasKnownValue)
+            try
             {
-                return parsed;
+                object maidata = InvokeValueTaskResult(song, "GetMaidataAsync", new object[] { false, null, token });
+                BpmFacet parsed = ExtractBpmFromMaidata(maidata, selectedDifficulty);
+                if (parsed != null && parsed.HasKnownValue)
+                {
+                    return parsed;
+                }
+            }
+            catch
+            {
+            }
+
+            BpmFacet wholeBpm = TryBpmFromRawMaidata(song, selectedDifficulty);
+            if (wholeBpm != null && wholeBpm.HasKnownValue)
+            {
+                return wholeBpm;
             }
 
             return TryBpmFromChartAnalyzer();
@@ -1899,15 +1965,6 @@ namespace MajdataQolSongListMod
                 return selectedBpm;
             }
 
-            foreach (object chart in EnumerateValues(charts))
-            {
-                BpmFacet chartBpm = ExtractBpmFromChart(chart);
-                if (chartBpm != null && chartBpm.HasKnownValue)
-                {
-                    return chartBpm;
-                }
-            }
-
             return null;
         }
 
@@ -1954,6 +2011,31 @@ namespace MajdataQolSongListMod
             return TryDecimal(value, out bpm) && bpm > 0m ? BpmFacet.Known(bpm) : null;
         }
 
+        private static BpmFacet TryBpmFromRawMaidata(ISongDetail song, int selectedDifficulty)
+        {
+            string path = GetMemberValue(song, "_maidataPath") as string;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                string cachePath = GetMemberValue(song, "_cachePath") as string;
+                path = string.IsNullOrWhiteSpace(cachePath) ? null : Path.Combine(cachePath, "maidata.txt");
+            }
+
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return null;
+            }
+
+            try
+            {
+                string text = File.ReadAllText(path);
+                return new ChartDataHydrator(new HttpTextFetcher(), "https://majdata.net").CalculateBpmFromMaidata(text, selectedDifficulty);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static object GetMemberValue(object target, string name)
         {
             if (target == null || string.IsNullOrWhiteSpace(name))
@@ -1961,15 +2043,33 @@ namespace MajdataQolSongListMod
                 return null;
             }
 
-            Type type = target.GetType();
-            PropertyInfo property = type.GetProperty(name, InstanceFlags);
-            if (property != null)
+            for (Type type = target.GetType(); type != null; type = type.BaseType)
             {
-                return property.GetValue(target, null);
+                PropertyInfo property = type.GetProperty(name, InstanceFlags);
+                if (property != null)
+                {
+                    return property.GetValue(target, null);
+                }
+
+                FieldInfo field = type.GetField(name, InstanceFlags);
+                if (field != null)
+                {
+                    return field.GetValue(target);
+                }
             }
 
-            FieldInfo field = type.GetField(name, InstanceFlags);
-            return field == null ? null : field.GetValue(target);
+            return null;
+        }
+
+        private static CoverListDisplayer ActiveCoverListDisplayer()
+        {
+            CoverListDisplayer[] active = Resources.FindObjectsOfTypeAll<CoverListDisplayer>()
+                .Where(displayer => displayer != null && displayer.gameObject != null && displayer.gameObject.activeInHierarchy)
+                .ToArray();
+
+            return active.FirstOrDefault(displayer => displayer.IsChartList)
+                ?? active.FirstOrDefault()
+                ?? Object.FindObjectOfType<CoverListDisplayer>();
         }
 
         private static object GetIndexedValue(object target, int index)

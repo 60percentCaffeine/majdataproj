@@ -49,6 +49,58 @@ namespace MajdataQolSongListMod.Core.Tests
         }
 
         [Fact]
+        public void LocalMaidataParsingUsesWholeBpmWhenChartHasNoInlineBpmTimings()
+        {
+            ChartDataHydrator hydrator = new ChartDataHydrator(new FakeFetcher(""), "https://majdata.example");
+
+            BpmFacet bpm = hydrator.CalculateBpmFromMaidata("&title=Song\n&wholebpm=175\n&inote_1={4}1,2,3,4,");
+
+            Assert.True(bpm.HasKnownValue);
+            Assert.Equal(175m, bpm.Minimum);
+            Assert.Equal(175m, bpm.Maximum);
+            Assert.Equal("175BPM", ChartDataHydrator.FormatBpm(bpm));
+        }
+
+        [Fact]
+        public void LocalMaidataParsingUsesWholeBpmRangeWhenChartHasNoInlineBpmTimings()
+        {
+            ChartDataHydrator hydrator = new ChartDataHydrator(new FakeFetcher(""), "https://majdata.example");
+
+            BpmFacet bpm = hydrator.CalculateBpmFromMaidata("&title=Song\n&wholebpm=170～190\n&inote_1={4}1,2,3,4,");
+
+            Assert.True(bpm.HasKnownValue);
+            Assert.Equal(170m, bpm.Minimum);
+            Assert.Equal(190m, bpm.Maximum);
+            Assert.Equal("170-190BPM", ChartDataHydrator.FormatBpm(bpm));
+        }
+
+        [Fact]
+        public void LocalMaidataParsingCalculatesBpmForSelectedDifficultyOnly()
+        {
+            ChartDataHydrator hydrator = new ChartDataHydrator(new FakeFetcher(""), "https://majdata.example");
+
+            BpmFacet emptyEasy = hydrator.CalculateBpmFromMaidata("&inote_1=\n&inote_2=(155){4}1,2,3,4,", 0);
+            BpmFacet playableBasic = hydrator.CalculateBpmFromMaidata("&inote_1=\n&inote_2=(155){4}1,2,3,4,", 1);
+
+            Assert.Equal(HydrationState.Unknown, emptyEasy.State);
+            Assert.True(playableBasic.HasKnownValue);
+            Assert.Equal("155BPM", ChartDataHydrator.FormatBpm(playableBasic));
+        }
+
+        [Fact]
+        public void LocalMaidataParsingDoesNotUseWholeBpmForEmptySelectedDifficulty()
+        {
+            ChartDataHydrator hydrator = new ChartDataHydrator(new FakeFetcher(""), "https://majdata.example");
+
+            string maidata = "&wholebpm=175\n&inote_1=\n&inote_2={4}1,2,3,4,";
+            BpmFacet emptyEasy = hydrator.CalculateBpmFromMaidata(maidata, 0);
+            BpmFacet playableBasic = hydrator.CalculateBpmFromMaidata(maidata, 1);
+
+            Assert.Equal(HydrationState.Unknown, emptyEasy.State);
+            Assert.Equal("175BPM", ChartDataHydrator.FormatBpm(playableBasic));
+        }
+
+        [Fact]
         public void MalformedMaidataProducesUnknownBpm()
         {
             ChartDataHydrator hydrator = new ChartDataHydrator(new FakeFetcher(""), "https://majdata.example");
