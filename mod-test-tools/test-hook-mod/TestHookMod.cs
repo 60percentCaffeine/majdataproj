@@ -633,7 +633,7 @@ namespace TestHookMod
                     return;
                 }
 
-                string command = "start \"Test Hook Mod REPL\" \"" + exePath + "\" --host " + config.Host + " --port " + config.Port.ToString(CultureInfo.InvariantCulture);
+                string command = "start \"Test Hook Mod REPL\" \"" + exePath + "\" --host " + config.Host + " --port " + config.Port.ToString(CultureInfo.InvariantCulture) + " --parent-pid " + Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
                 ProcessStartInfo start = new ProcessStartInfo();
                 start.FileName = "cmd.exe";
                 start.Arguments = "/c " + command;

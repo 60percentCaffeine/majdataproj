@@ -1,8 +1,10 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 
 namespace ModTestReplClient
 {
@@ -11,6 +13,7 @@ namespace ModTestReplClient
         private static int Main(string[] args)
         {
             BridgeEndpoint endpoint = BridgeEndpoint.FromArgs(args);
+            ParentProcessExitWatcher.Start(endpoint.ParentPid);
             Console.Title = "Test Hook Mod REPL " + endpoint.BaseUrl;
             Console.WriteLine("Test Hook Mod REPL connected to " + endpoint.BaseUrl);
             Console.WriteLine("Type :help for commands.");
@@ -134,6 +137,7 @@ namespace ModTestReplClient
     {
         public string Host = "127.0.0.1";
         public int Port = 17443;
+        public int ParentPid;
 
         public string BaseUrl
         {
@@ -153,9 +157,70 @@ namespace ModTestReplClient
                 {
                     int.TryParse(args[++i], out endpoint.Port);
                 }
+                else if (args[i] == "--parent-pid" && i + 1 < args.Length)
+                {
+                    int.TryParse(args[++i], out endpoint.ParentPid);
+                }
             }
 
             return endpoint;
+        }
+    }
+
+    internal static class ParentProcessExitWatcher
+    {
+        public static void Start(int parentPid)
+        {
+            if (parentPid <= 0)
+            {
+                return;
+            }
+
+            Thread watcher = new Thread(delegate()
+            {
+                Watch(parentPid);
+            });
+            watcher.IsBackground = true;
+            watcher.Name = "Test Hook Mod REPL parent watcher";
+            watcher.Start();
+        }
+
+        private static void Watch(int parentPid)
+        {
+            try
+            {
+                using (Process parent = Process.GetProcessById(parentPid))
+                {
+                    parent.WaitForExit();
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Console.Error.WriteLine("Could not watch Majdata parent process " + parentPid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ": " + ex.Message);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                Console.WriteLine();
+                Console.WriteLine("Majdata closed; exiting Test Hook Mod REPL.");
+            }
+            catch
+            {
+            }
+
+            Environment.Exit(0);
         }
     }
 }
