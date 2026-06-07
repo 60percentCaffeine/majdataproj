@@ -1653,7 +1653,14 @@ new Func<object>(() => {
         addCase("grouping difficulty bracket Master folder contains only Master rows", masterFolder != null && masterFolder.ToArray().All(song => !string.IsNullOrWhiteSpace(levelAt(song, 4))), "count=" + (masterFolder == null ? 0 : masterFolder.Count));
 
         applySettings("DifficultyLevel", "Default", "No", "Mixed", 4);
-        var expectedLevelCounts = countsBy(baseAll, song => levelBucket(levelAt(song, 4)));
+        var expectedLevelCounts = baseAll
+            .SelectMany(song => {
+                var levels = song.Levels == null ? new string[0] : song.Levels.ToArray();
+                var buckets = levels.Where(level => !string.IsNullOrWhiteSpace(level)).Select(level => levelBucket(level)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                return (buckets.Length == 0 ? new[] { "Other" } : buckets).Select(bucket => new { Bucket = bucket, Song = song });
+            })
+            .GroupBy(row => row.Bucket.ToUpperInvariant())
+            .ToDictionary(group => group.First().Bucket, group => group.Count(), StringComparer.OrdinalIgnoreCase);
         string levelDuplicates = duplicateMatchingCollectionNames(MajdataPlay.SongStorage.Collections, expectedLevelCounts);
         var actualLevelCounts = matchingCollectionCounts(MajdataPlay.SongStorage.Collections, expectedLevelCounts);
         addCase("grouping difficulty level creates unique expected folders", string.IsNullOrWhiteSpace(levelDuplicates), "duplicates=" + levelDuplicates);
@@ -1899,6 +1906,7 @@ new Func<object>(() => {
             };
             interact.GetType().GetProperty("Response").SetValue(interact, response, null);
             interact.GetType().GetProperty("LastActive").SetValue(interact, DateTime.Now, null);
+            bridgeType.GetMethod("SetSongOnlinePlayCountForDiagnostics").Invoke(null, new object[] { hash(onlineRows[i]), onlinePlayCounts[i] });
         }
 
         applySettings("Default", "PlayCount", "No", "Mixed", 0);
@@ -1909,16 +1917,23 @@ new Func<object>(() => {
         }
 
         var target = collections[targetIndex];
-        string[] expected = target.ToArray()
+        string[] expectedFolder = target.ToArray()
             .Where(song => song != null && expectedCounts.ContainsKey(hash(song)))
             .OrderByDescending(song => expectedCounts[hash(song)])
-            .Take(Math.Min(4, expectedCounts.Count))
             .Select(song => hash(song))
+            .ToArray();
+        string[] actualFolder = target.ToArray()
+            .Where(song => song != null && expectedCounts.ContainsKey(hash(song)))
+            .Select(song => hash(song))
+            .ToArray();
+        string[] expected = expectedFolder
+            .Take(Math.Min(4, expectedCounts.Count))
             .ToArray();
         if (expected.Length < 4) {
             return new { ok = false, consistent = false, details = "Could not find four diagnostic online play-count rows after sorting.", error = "Could not find four diagnostic online play-count rows after sorting." };
         }
 
+        bool folderExact = actualFolder.SequenceEqual(expectedFolder);
         MajdataPlay.SongStorage.CollectionIndex = targetIndex;
         target.Index = 0;
         var slide = coverListType.GetMethod("SlideListInternal", Flags);
@@ -1964,15 +1979,21 @@ new Func<object>(() => {
 
         string observedText = string.Join("|", observed.ToArray());
         string expectedText = string.Join("|", expected);
-        bool consistent = observedText == expectedText && nonIncreasing;
+        string actualFolderText = string.Join("|", actualFolder);
+        string expectedFolderText = string.Join("|", expectedFolder);
+        bool observedExact = observedText == expectedText;
+        bool cursorStartedAtFirst = rows.Count > 0 && Convert.ToInt32(rows[0].GetType().GetProperty("selectedIndex").GetValue(rows[0], null)) == 0 && observed[0] == expected[0];
+        bool consistent = folderExact && cursorStartedAtFirst && observedExact && nonIncreasing;
         return new {
             ok = true,
             consistent = consistent,
             collection = collectionName,
             expected = expectedText,
             observed = observedText,
+            actualFolder = actualFolderText,
+            expectedFolder = expectedFolderText,
             observations = rows.ToArray(),
-            details = "collection=" + collectionName + "; expectedByVisibleOnlinePlayCounts=" + expectedText + "; observedHashes=" + observedText + "; observedVisibleOnlinePlayCounts=" + string.Join("|", observedCounts.Select(value => value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray()) + "; nonIncreasing=" + nonIncreasing,
+            details = "collection=" + collectionName + "; expectedFolder=" + expectedFolderText + "; actualFolder=" + actualFolderText + "; expectedByVisibleOnlinePlayCounts=" + expectedText + "; observedHashes=" + observedText + "; observedVisibleOnlinePlayCounts=" + string.Join("|", observedCounts.Select(value => value.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray()) + "; folderExact=" + folderExact + "; cursorStartedAtFirst=" + cursorStartedAtFirst + "; observedExact=" + observedExact + "; nonIncreasing=" + nonIncreasing,
             error = ""
         };
     } catch (Exception ex) {
@@ -2204,6 +2225,13 @@ new Func<object>(() => {
             var levels = song.Levels.ToArray();
             return difficulty < levels.Length && !string.IsNullOrWhiteSpace(levels[difficulty]);
         };
+        Func<MajdataPlay.Collections.SongCollection, int, string> carouselWindow = (collection, centerIndex) => {
+            if (collection == null || collection.Count == 0) return "";
+            var rows = collection.ToArray();
+            int start = Math.Max(0, centerIndex - 3);
+            int end = Math.Min(rows.Length - 1, centerIndex + 3);
+            return string.Join("|", Enumerable.Range(start, end - start + 1).Select(i => hash(rows[i])).ToArray());
+        };
 
         int[] difficultyPreference = new[] { 4, 3, 2, 1, 0 };
         string targetName = "";
@@ -2258,6 +2286,8 @@ new Func<object>(() => {
         fixedTicks();
 
         var selected = coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
+        int selectedIndexBefore = Convert.ToInt32(coverListType.GetField("desiredListPos", Flags).GetValue(coverList));
+        string carouselBefore = carouselWindow(target, selectedIndexBefore);
         Type listManagerType = Type.GetType("MajdataPlay.Scenes.List.ListManager, Assembly-CSharp", true);
         object listManager = UnityEngine.Resources.FindObjectsOfTypeAll(listManagerType)
             .OfType<UnityEngine.Component>()
@@ -2275,7 +2305,8 @@ new Func<object>(() => {
             selectedHash = hash(selected),
             selectedTitle = selected == null ? "" : selected.Title,
             selectedDifficulty = selectedDifficulty,
-            details = "beforeCollection=" + targetName + "; beforeSong=" + (selected == null ? "" : selected.Title) + "/" + hash(selected) + "; selectedDifficulty=" + selectedDifficulty.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            carouselWindow = carouselBefore,
+            details = "beforeCollection=" + targetName + "; beforeSong=" + (selected == null ? "" : selected.Title) + "/" + hash(selected) + "; selectedDifficulty=" + selectedDifficulty.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; carouselWindow=" + carouselBefore,
             error = ""
         };
     } catch (Exception ex) {
@@ -2346,12 +2377,14 @@ function Invoke-KnownBugSortPersistenceObserveCanary {
     param(
         [string]$BeforeCollection,
         [string]$BeforeSongHash,
-        [int]$BeforeDifficulty
+        [int]$BeforeDifficulty,
+        [string]$BeforeCarouselWindow = ""
     )
 
     $beforeCollectionLiteral = Convert-ToCSharpStringLiteral $BeforeCollection
     $beforeSongHashLiteral = Convert-ToCSharpStringLiteral $BeforeSongHash
     $beforeDifficultyLiteral = [int]$BeforeDifficulty
+    $beforeCarouselWindowLiteral = Convert-ToCSharpStringLiteral $BeforeCarouselWindow
 
     Invoke-GameEval @"
 new Func<object>(() => {
@@ -2379,10 +2412,20 @@ new Func<object>(() => {
             return new { ok = false, consistent = false, details = "CoverListDisplayer not found after returning from gameplay.", error = "CoverListDisplayer not found after returning from gameplay." };
         }
 
+        Func<MajdataPlay.ISongDetail, string> hash = song => song == null ? "" : (song.Hash ?? "");
+        Func<MajdataPlay.Collections.SongCollection, int, string> carouselWindow = (collection, centerIndex) => {
+            if (collection == null || collection.Count == 0) return "";
+            var rows = collection.ToArray();
+            int start = Math.Max(0, centerIndex - 3);
+            int end = Math.Min(rows.Length - 1, centerIndex + 3);
+            return string.Join("|", Enumerable.Range(start, end - start + 1).Select(i => hash(rows[i])).ToArray());
+        };
         var selectedCollection = coverListType.GetProperty("SelectedCollection", Flags).GetValue(coverList, null) as MajdataPlay.Collections.SongCollection;
         var selectedSong = coverListType.GetProperty("SelectedSong", Flags).GetValue(coverList, null) as MajdataPlay.ISongDetail;
         string mode = coverListType.GetProperty("Mode", Flags).GetValue(coverList, null).ToString();
         int selectedDifficulty = Convert.ToInt32(coverListType.GetField("selectedDifficulty", Flags).GetValue(coverList));
+        int selectedIndexAfter = Convert.ToInt32(coverListType.GetField("desiredListPos", Flags).GetValue(coverList));
+        string afterCarouselWindow = carouselWindow(selectedCollection, selectedIndexAfter);
         string afterCollection = selectedCollection == null ? "" : (selectedCollection.Name ?? "");
         string afterSongHash = selectedSong == null ? "" : (selectedSong.Hash ?? "");
         bool folderUnchanged = string.Equals(afterCollection, $beforeCollectionLiteral, StringComparison.OrdinalIgnoreCase);
@@ -2390,8 +2433,9 @@ new Func<object>(() => {
         bool sortUnchanged = string.Equals(sorting, "Difficulty", StringComparison.OrdinalIgnoreCase);
         bool difficultyUnchanged = selectedDifficulty == $beforeDifficultyLiteral;
         bool songUnchanged = string.Equals(afterSongHash, $beforeSongHashLiteral, StringComparison.Ordinal);
+        bool carouselUnchanged = string.Equals(afterCarouselWindow, $beforeCarouselWindowLiteral, StringComparison.Ordinal);
         bool stillInSongList = mode == "Chart";
-        bool consistent = folderUnchanged && groupingUnchanged && sortUnchanged && difficultyUnchanged && songUnchanged && stillInSongList;
+        bool consistent = folderUnchanged && groupingUnchanged && sortUnchanged && difficultyUnchanged && songUnchanged && carouselUnchanged && stillInSongList;
 
         return new {
             ok = true,
@@ -2405,7 +2449,9 @@ new Func<object>(() => {
             grouping = grouping,
             sorting = sorting,
             mode = mode,
-            details = "beforeCollection=" + $beforeCollectionLiteral + "; afterCollection=" + afterCollection + "; beforeSongHash=" + $beforeSongHashLiteral + "; afterSongHash=" + afterSongHash + "; sorting=" + sorting + "; grouping=" + grouping + "; beforeDifficulty=" + $beforeDifficultyLiteral.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; afterDifficulty=" + selectedDifficulty.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; mode=" + mode + "; folderUnchanged=" + folderUnchanged + "; groupingUnchanged=" + groupingUnchanged + "; sortUnchanged=" + sortUnchanged + "; difficultyUnchanged=" + difficultyUnchanged + "; songUnchanged=" + songUnchanged + "; stillInSongList=" + stillInSongList,
+            beforeCarouselWindow = $beforeCarouselWindowLiteral,
+            afterCarouselWindow = afterCarouselWindow,
+            details = "beforeCollection=" + $beforeCollectionLiteral + "; afterCollection=" + afterCollection + "; beforeSongHash=" + $beforeSongHashLiteral + "; afterSongHash=" + afterSongHash + "; sorting=" + sorting + "; grouping=" + grouping + "; beforeDifficulty=" + $beforeDifficultyLiteral.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; afterDifficulty=" + selectedDifficulty.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; beforeCarouselWindow=" + $beforeCarouselWindowLiteral + "; afterCarouselWindow=" + afterCarouselWindow + "; mode=" + mode + "; folderUnchanged=" + folderUnchanged + "; groupingUnchanged=" + groupingUnchanged + "; sortUnchanged=" + sortUnchanged + "; difficultyUnchanged=" + difficultyUnchanged + "; songUnchanged=" + songUnchanged + "; carouselUnchanged=" + carouselUnchanged + "; stillInSongList=" + stillInSongList,
             error = ""
         };
     } catch (Exception ex) {
@@ -2492,7 +2538,7 @@ function Run-KnownBugSnapshot {
             } else {
                 Wait-ForKnownBugScene -Scene "List" -RequireCoverList | Out-Null
                 Start-Sleep -Milliseconds 750
-                $postPlayProbe = Convert-SerializedGameStateValue (Invoke-KnownBugSortPersistenceObserveCanary -BeforeCollection $prepare.collection -BeforeSongHash $prepare.selectedHash -BeforeDifficulty ([int]$prepare.selectedDifficulty)).result.properties
+                $postPlayProbe = Convert-SerializedGameStateValue (Invoke-KnownBugSortPersistenceObserveCanary -BeforeCollection $prepare.collection -BeforeSongHash $prepare.selectedHash -BeforeDifficulty ([int]$prepare.selectedDifficulty) -BeforeCarouselWindow $prepare.carouselWindow).result.properties
             }
         } else {
             $postPlayProbe = [pscustomobject]@{
@@ -2514,7 +2560,7 @@ function Run-KnownBugSnapshot {
         -Probe $postPlayProbe `
         -ScreenshotName "03-known-bug-sort-persists-after-gameplay" `
         -ScreenshotDescription "Song select after entering a difficulty-sorted folder, starting gameplay, and leaving back to song select." `
-        -ExpectedBehavior "After starting a song from a Difficulty Level grouped folder with Difficulty sorting and returning through the post-song result flow, song select should return to the same opened folder, same selected song, same grouping, same sorting, and same selected difficulty."
+        -ExpectedBehavior "After starting a song from a Difficulty Level grouped folder with Difficulty sorting and returning through the post-song result flow, song select should return to the same opened folder, same selected song, same visible carousel song window, same grouping, same sorting, and same selected difficulty."
 
     return [pscustomobject]@{
         Label = $Label

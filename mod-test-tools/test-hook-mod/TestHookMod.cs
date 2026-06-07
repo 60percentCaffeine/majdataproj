@@ -41,6 +41,7 @@ namespace TestHookMod
                 _server = new BridgeServer(config, BridgeVersion, () => _mainThreadDispatcherReady, _evalDispatcher);
                 _server.Start();
                 MelonLogger.Msg("Test Hook Mod listening on http://" + config.Host + ":" + config.Port + " replEnabled=" + config.ReplEnabled);
+                MelonLogger.Msg("Test Hook Mod auto-logout suppressor armed.");
                 if (config.ReplEnabled)
                 {
                     ReplLauncher.LaunchOrReveal(config);
@@ -61,6 +62,8 @@ namespace TestHookMod
             {
                 dispatcher.Update();
             }
+
+            AutoLogoutSuppressor.Update();
         }
 
         public override void OnApplicationQuit()
@@ -70,6 +73,60 @@ namespace TestHookMod
             {
                 server.Dispose();
                 _server = null;
+            }
+        }
+    }
+
+    internal static class AutoLogoutSuppressor
+    {
+        private const int ResetEveryFrames = 30;
+        private const string ListManagerTypeName = "MajdataPlay.Scenes.List.ListManager";
+        private static readonly BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        private static int _lastResetFrame = -ResetEveryFrames;
+        private static bool _reported;
+
+        public static void Update()
+        {
+            int frame = UnityEngine.Time.frameCount;
+            if (frame - _lastResetFrame < ResetEveryFrames)
+            {
+                return;
+            }
+
+            _lastResetFrame = frame;
+            try
+            {
+                int patched = 0;
+                foreach (UnityEngine.MonoBehaviour behaviour in UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.MonoBehaviour>())
+                {
+                    if (behaviour == null || behaviour.gameObject == null || behaviour.GetType().FullName != ListManagerTypeName)
+                    {
+                        continue;
+                    }
+
+                    FieldInfo inactiveTime = behaviour.GetType().GetField("_inactiveTimeSec", Flags);
+                    if (inactiveTime == null)
+                    {
+                        continue;
+                    }
+
+                    inactiveTime.SetValue(behaviour, 0f);
+                    patched++;
+                }
+
+                if (patched > 0 && !_reported)
+                {
+                    _reported = true;
+                    MelonLogger.Msg("Test Hook Mod suppressing List scene auto-logout during tests.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_reported)
+                {
+                    _reported = true;
+                    MelonLogger.Warning("Test Hook Mod auto-logout suppressor failed: " + ex.Message);
+                }
             }
         }
     }

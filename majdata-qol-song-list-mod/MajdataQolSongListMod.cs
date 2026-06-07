@@ -169,12 +169,13 @@ namespace MajdataQolSongListMod
 
     internal sealed class WebsiteRuntimeCollection
     {
-        public WebsiteRuntimeCollection(string name, WebsiteCollectionKind kind, IEnumerable<string> hashes, int totalCount)
+        public WebsiteRuntimeCollection(string name, WebsiteCollectionKind kind, IEnumerable<string> hashes, int totalCount, IEnumerable<ISongDetail> preferredSongs = null)
         {
             Name = string.IsNullOrWhiteSpace(name) ? "Website Collection" : name.Trim();
             Kind = kind;
             Hashes = (hashes ?? Enumerable.Empty<string>()).Where(hash => !string.IsNullOrWhiteSpace(hash)).Select(hash => hash.Trim()).ToArray();
             TotalCount = Math.Max(totalCount, Hashes.Count);
+            PreferredSongs = (preferredSongs ?? Enumerable.Empty<ISongDetail>()).Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash)).ToArray();
         }
 
         public string Name { get; private set; }
@@ -182,6 +183,8 @@ namespace MajdataQolSongListMod
         public WebsiteCollectionKind Kind { get; private set; }
 
         public IReadOnlyList<string> Hashes { get; private set; }
+
+        public IReadOnlyList<ISongDetail> PreferredSongs { get; private set; }
 
         public int TotalCount { get; private set; }
     }
@@ -204,9 +207,11 @@ namespace MajdataQolSongListMod
         private readonly HydrationScheduler _hydrationScheduler = new HydrationScheduler();
         private readonly Dictionary<string, SelectedSongRuntimeMetadata> _selectedSongMetadata = new Dictionary<string, SelectedSongRuntimeMetadata>(StringComparer.Ordinal);
         private readonly Dictionary<string, ScoreFacet> _scoreOverrides = new Dictionary<string, ScoreFacet>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> _onlinePlayCountOverrides = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly List<WebsiteRuntimeCollection> _websiteCollections = new List<WebsiteRuntimeCollection>();
         private readonly object _selectedSongMetadataLock = new object();
         private readonly object _scoreOverrideLock = new object();
+        private readonly object _visibleOnlinePlayCountCacheLock = new object();
         private readonly object _randomRecommendedLock = new object();
         private readonly object _websiteCollectionLock = new object();
 
@@ -221,10 +226,15 @@ namespace MajdataQolSongListMod
         private int _frame;
         private string _lastMetadataLine = string.Empty;
         private QolStatusOverlay _statusOverlay;
+        private Dictionary<string, int> _visibleOnlinePlayCountByHashCache;
         private ISongDetail[] _randomRecommendedSongs = new ISongDetail[0];
         private int _randomRecommendedSeed = 17;
         private string _lastRandomRecommendedStatus = "Random Recommended empty";
         private string _lastWebsiteCollectionStatus = "Website collections not loaded";
+        private string _lastKnownCollectionName = string.Empty;
+        private string _lastKnownSongHash = string.Empty;
+        private bool _restoreSelectionOnNextListScene;
+        private bool _capturedStorageSelectionForScene;
 
         public QolRuntimeBridge(Action<string> log, Action<string> error)
         {
@@ -396,6 +406,22 @@ namespace MajdataQolSongListMod
             return true;
         }
 
+        public static bool SetSongOnlinePlayCountForDiagnostics(string hash, int playCount)
+        {
+            if (Active == null || string.IsNullOrWhiteSpace(hash) || playCount < 0)
+            {
+                return false;
+            }
+
+            lock (Active._scoreOverrideLock)
+            {
+                Active._onlinePlayCountOverrides[hash] = playCount;
+                Active._scoreOverrides[hash] = new ScoreFacet(null, playCount, false, false, null);
+            }
+            Active.ClearVisibleOnlinePlayCountCache();
+            return true;
+        }
+
         public static string RefreshRandomRecommendedForDiagnostics(bool forceFailure)
         {
             if (Active == null)
@@ -441,10 +467,11 @@ namespace MajdataQolSongListMod
                 .Where(hash => !string.IsNullOrWhiteSpace(hash))
                 .ToArray();
 
+            ISongDetail[] preferredSongs = Active.ResolvePreferredSongsForHashes(hashes);
             lock (Active._websiteCollectionLock)
             {
                 Active._websiteCollections.RemoveAll(collection => string.Equals(collection.Name, name, StringComparison.OrdinalIgnoreCase));
-                Active._websiteCollections.Add(new WebsiteRuntimeCollection(name.Trim(), WebsiteCollectionKind.Subscribed, hashes, totalCount));
+                Active._websiteCollections.Add(new WebsiteRuntimeCollection(name.Trim(), WebsiteCollectionKind.Subscribed, hashes, totalCount, preferredSongs));
                 Active._lastWebsiteCollectionStatus = "Website collections refreshed: " + name.Trim();
             }
 
@@ -522,6 +549,11 @@ namespace MajdataQolSongListMod
                 {
                     _lastSceneName = sceneName;
                     _patchedSettingManager = null;
+                    _capturedStorageSelectionForScene = false;
+                    if (string.Equals(sceneName, "List", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(_lastKnownSongHash))
+                    {
+                        _restoreSelectionOnNextListScene = true;
+                    }
                 }
 
                 EnsureCollectionsApplied();
@@ -655,9 +687,21 @@ namespace MajdataQolSongListMod
             }
 
             CaptureBaseCollections(current);
+            if (!_restoreSelectionOnNextListScene)
+            {
+                if (string.Equals(SceneManager.GetActiveScene().name, "List", StringComparison.Ordinal))
+                {
+                    CaptureActiveSelectionIfApplied(current);
+                }
+                else if (string.Equals(SceneManager.GetActiveScene().name, "Game", StringComparison.Ordinal))
+                {
+                    CaptureStorageSelectionIfApplied(current);
+                }
+            }
 
             int selectedDifficulty = SelectedDifficultyIndex();
             MapListSettings settings = _runtimeSettings.Snapshot();
+            bool storageWasReset = _lastAppliedCollections != null && !ReferenceEquals(current, _lastAppliedCollections) && string.Equals(SceneManager.GetActiveScene().name, "List", StringComparison.Ordinal);
             bool needsApply =
                 force ||
                 _lastAppliedCollections == null ||
@@ -666,15 +710,31 @@ namespace MajdataQolSongListMod
                 settings.Sorting != _lastAppliedSettings.Sorting ||
                 settings.Grouping != _lastAppliedSettings.Grouping ||
                 settings.DownloadedSongsFilter != _lastAppliedSettings.DownloadedSongsFilter ||
-                selectedDifficulty != _lastAppliedDifficulty;
+                selectedDifficulty != _lastAppliedDifficulty ||
+                storageWasReset;
 
             if (!needsApply)
             {
+                if (_restoreSelectionOnNextListScene && string.Equals(SceneManager.GetActiveScene().name, "List", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(_lastKnownSongHash))
+                {
+                    RestoreLastKnownSelection(current);
+                    SyncActiveCoverListCollections(current, _lastKnownSongHash);
+                    _restoreSelectionOnNextListScene = !ActiveSelectionMatches(_lastKnownSongHash);
+                }
                 return;
             }
 
+            ClearVisibleOnlinePlayCountCache();
             SongCollection[] next = BuildCollections(settings, selectedDifficulty);
-            SetSongStorageCollections(next);
+            if (storageWasReset)
+            {
+                RestoreLastKnownSelection(next);
+            }
+            SetSongStorageCollections(next, storageWasReset ? _lastKnownSongHash : null);
+            if (storageWasReset)
+            {
+                _restoreSelectionOnNextListScene = !ActiveSelectionMatches(_lastKnownSongHash);
+            }
             _lastAppliedCollections = next;
             _lastAppliedSettings = settings;
             _lastAppliedDifficulty = selectedDifficulty;
@@ -706,6 +766,98 @@ namespace MajdataQolSongListMod
             _baseCollections = withoutQol;
         }
 
+        private void CaptureActiveSelectionIfApplied(SongCollection[] current)
+        {
+            if (_lastAppliedCollections == null || !ReferenceEquals(current, _lastAppliedCollections))
+            {
+                return;
+            }
+
+            CoverListDisplayer list = ActiveCoverListDisplayer();
+            if (list == null || !list.IsChartList)
+            {
+                return;
+            }
+
+            SongCollection collection = list.SelectedCollection;
+            ISongDetail song = list.SelectedSong;
+            if (collection == null || song == null || string.IsNullOrWhiteSpace(song.Hash))
+            {
+                return;
+            }
+
+            _lastKnownCollectionName = collection.Name ?? string.Empty;
+            _lastKnownSongHash = song.Hash;
+        }
+
+        private void CaptureStorageSelectionIfApplied(SongCollection[] current)
+        {
+            if (_capturedStorageSelectionForScene || _lastAppliedCollections == null || !ReferenceEquals(current, _lastAppliedCollections) || SongStorage.CollectionIndex < 0 || SongStorage.CollectionIndex >= current.Length)
+            {
+                return;
+            }
+
+            SongCollection collection = current[SongStorage.CollectionIndex];
+            if (collection == null || collection.Count == 0)
+            {
+                return;
+            }
+
+            ISongDetail song;
+            try
+            {
+                song = collection.Current;
+            }
+            catch
+            {
+                song = null;
+            }
+
+            if (song == null || string.IsNullOrWhiteSpace(song.Hash))
+            {
+                return;
+            }
+
+            _lastKnownCollectionName = collection.Name ?? string.Empty;
+            _lastKnownSongHash = song.Hash;
+            _capturedStorageSelectionForScene = true;
+        }
+
+        private void RestoreLastKnownSelection(SongCollection[] collections)
+        {
+            if (collections == null || collections.Length == 0 || string.IsNullOrWhiteSpace(_lastKnownCollectionName))
+            {
+                return;
+            }
+
+            int collectionIndex = Array.FindIndex(collections, collection => collection != null && string.Equals(collection.Name, _lastKnownCollectionName, StringComparison.OrdinalIgnoreCase));
+            if (collectionIndex < 0)
+            {
+                return;
+            }
+
+            SongStorage.CollectionIndex = collectionIndex;
+            SongCollection collection = collections[collectionIndex];
+            if (collection == null || collection.Count == 0 || string.IsNullOrWhiteSpace(_lastKnownSongHash))
+            {
+                return;
+            }
+
+            ISongDetail match = collection.ToArray().FirstOrDefault(song => song != null && string.Equals(song.Hash, _lastKnownSongHash, StringComparison.Ordinal));
+            if (match != null)
+            {
+                collection.SetCursor(match);
+            }
+        }
+
+        private void ClearVisibleOnlinePlayCountCache()
+        {
+            lock (_visibleOnlinePlayCountCacheLock)
+            {
+                _visibleOnlinePlayCountByHashCache = null;
+            }
+        }
+
         private SongCollection[] BuildCollections(MapListSettings settings, int selectedDifficulty)
         {
             SongCollection[] source = _baseCollections ?? SongStorage.Collections;
@@ -714,7 +866,7 @@ namespace MajdataQolSongListMod
                 SongCollection[] defaultCollections = HasActiveSongTransform(settings)
                     ? TransformCollections(source, settings, selectedDifficulty)
                     : source;
-                return AppendRandomRecommended(AppendWebsiteCollections(defaultCollections, settings));
+                return AppendRandomRecommended(AppendWebsiteCollections(defaultCollections, settings, selectedDifficulty));
             }
 
             List<ISongDetail> songs = ApplySongSettings(AllSongs(source), settings, selectedDifficulty).ToList();
@@ -728,9 +880,10 @@ namespace MajdataQolSongListMod
                     break;
                 case MapListGroupingMode.DifficultyLevel:
                     grouped = songs
-                        .GroupBy(song => LevelBucket(song, selectedDifficulty))
+                        .SelectMany(song => LevelBuckets(song).Select(bucket => new { Bucket = bucket, Song = song }))
+                        .GroupBy(row => row.Bucket)
                         .OrderBy(group => LevelSortKey(group.Key))
-                        .Select(group => new SongCollection(group.Key, group.ToArray()));
+                        .Select(group => new SongCollection(group.Key, SortDifficultyLevelGroupRows(group.Select(row => row.Song), settings.Sorting, selectedDifficulty)));
                     break;
                 case MapListGroupingMode.Title:
                     grouped = songs
@@ -768,7 +921,7 @@ namespace MajdataQolSongListMod
                     break;
             }
 
-            return AppendRandomRecommended(AppendWebsiteCollections(grouped.ToArray(), settings));
+            return AppendRandomRecommended(AppendWebsiteCollections(grouped.ToArray(), settings, selectedDifficulty));
         }
 
         private static bool HasActiveSongTransform(MapListSettings settings)
@@ -848,7 +1001,7 @@ namespace MajdataQolSongListMod
             return result.ToArray();
         }
 
-        private SongCollection[] AppendWebsiteCollections(IEnumerable<SongCollection> collections, MapListSettings settings)
+        private SongCollection[] AppendWebsiteCollections(IEnumerable<SongCollection> collections, MapListSettings settings, int selectedDifficulty)
         {
             List<SongCollection> result = (collections ?? Enumerable.Empty<SongCollection>())
                 .Where(collection => collection != null && !IsWebsiteCollectionName(collection.Name))
@@ -865,11 +1018,12 @@ namespace MajdataQolSongListMod
                 return result.ToArray();
             }
 
-            List<ISongDetail> availableSongs = AllSongs(_baseCollections ?? SongStorage.Collections);
+            List<ISongDetail> availableSongs = AllSongInstances(_baseCollections ?? SongStorage.Collections);
             foreach (WebsiteRuntimeCollection websiteCollection in websiteCollections)
             {
                 WebsiteResolution resolution = ResolveWebsiteCollectionRows(websiteCollection, availableSongs, settings.DownloadedSongsFilter);
-                SongCollection collection = new SongCollection(websiteCollection.Name, resolution.Rows)
+                ISongDetail[] rows = ApplySongSettings(resolution.Rows, settings, selectedDifficulty).ToArray();
+                SongCollection collection = new SongCollection(websiteCollection.Name, rows)
                 {
                     IsOnline = true,
                     IsVirtual = true,
@@ -889,6 +1043,30 @@ namespace MajdataQolSongListMod
             }
         }
 
+        private ISongDetail[] ResolvePreferredSongsForHashes(IEnumerable<string> hashes)
+        {
+            Dictionary<string, ISongDetail> availableByHash = new Dictionary<string, ISongDetail>(StringComparer.Ordinal);
+            foreach (ISongDetail song in AllSongInstances(_baseCollections ?? SongStorage.Collections))
+            {
+                if (!availableByHash.ContainsKey(song.Hash))
+                {
+                    availableByHash.Add(song.Hash, song);
+                }
+            }
+
+            List<ISongDetail> result = new List<ISongDetail>();
+            foreach (string hash in hashes ?? Enumerable.Empty<string>())
+            {
+                ISongDetail song;
+                if (!string.IsNullOrWhiteSpace(hash) && availableByHash.TryGetValue(hash, out song))
+                {
+                    result.Add(song);
+                }
+            }
+
+            return result.ToArray();
+        }
+
         private static WebsiteResolution ResolveWebsiteCollectionRows(WebsiteRuntimeCollection collection, IEnumerable<ISongDetail> availableSongs, DownloadedSongsFilter scope)
         {
             Dictionary<string, ISongDetail> byHash = new Dictionary<string, ISongDetail>(StringComparer.Ordinal);
@@ -901,6 +1079,14 @@ namespace MajdataQolSongListMod
 
                 ISongDetail existing;
                 if (!byHash.TryGetValue(song.Hash, out existing) || (existing.IsOnline && !song.IsOnline))
+                {
+                    byHash[song.Hash] = song;
+                }
+            }
+
+            foreach (ISongDetail song in collection.PreferredSongs ?? new ISongDetail[0])
+            {
+                if (song != null && !string.IsNullOrWhiteSpace(song.Hash) && SourcePasses(song, scope))
                 {
                     byHash[song.Hash] = song;
                 }
@@ -1075,14 +1261,36 @@ namespace MajdataQolSongListMod
             {
                 foreach (ISongDetail song in collection.ToArray())
                 {
-                    if (!string.IsNullOrEmpty(song.Hash) && !byHash.ContainsKey(song.Hash))
+                    if (string.IsNullOrEmpty(song.Hash))
                     {
-                        byHash.Add(song.Hash, song);
+                        continue;
+                    }
+
+                    ISongDetail existing;
+                    if (!byHash.TryGetValue(song.Hash, out existing) || (existing.IsOnline && !song.IsOnline))
+                    {
+                        byHash[song.Hash] = song;
                     }
                 }
             }
 
             return byHash.Values.ToList();
+        }
+
+        private static List<ISongDetail> AllSongInstances(IEnumerable<SongCollection> collections)
+        {
+            List<ISongDetail> result = new List<ISongDetail>();
+            foreach (SongCollection collection in collections ?? Enumerable.Empty<SongCollection>())
+            {
+                if (collection == null)
+                {
+                    continue;
+                }
+
+                result.AddRange(collection.ToArray().Where(song => song != null && !string.IsNullOrWhiteSpace(song.Hash)));
+            }
+
+            return result;
         }
 
         private static IEnumerable<ISongDetail> ApplySongSettings(IEnumerable<ISongDetail> songs, MapListSettings settings, int selectedDifficulty)
@@ -1170,6 +1378,25 @@ namespace MajdataQolSongListMod
             return array.OrderBy(song => song, Comparer<ISongDetail>.Create(comparison)).ToArray();
         }
 
+        private static ISongDetail[] SortDifficultyLevelGroupRows(IEnumerable<ISongDetail> songs, MapListSortMode sortMode, int selectedDifficulty)
+        {
+            ISongDetail[] array = (songs ?? Enumerable.Empty<ISongDetail>()).Where(song => song != null).ToArray();
+            if (sortMode != MapListSortMode.Difficulty)
+            {
+                return array;
+            }
+
+            return array.OrderBy(song => song, Comparer<ISongDetail>.Create((left, right) =>
+            {
+                if (left.IsOnline != right.IsOnline)
+                {
+                    return left.IsOnline ? 1 : -1;
+                }
+
+                return CompareNullableAscending(LevelSortValue(left, selectedDifficulty), LevelSortValue(right, selectedDifficulty), SongTieBreak(left, right));
+            })).ToArray();
+        }
+
         private static Comparison<ISongDetail> SongComparison(MapListSortMode sortMode, int selectedDifficulty)
         {
             switch (sortMode)
@@ -1177,7 +1404,7 @@ namespace MajdataQolSongListMod
                 case MapListSortMode.DateAdded:
                     return (left, right) => CompareDescending(left.Timestamp, right.Timestamp, SongTieBreak(left, right));
                 case MapListSortMode.Difficulty:
-                    return (left, right) => CompareNullableAscending(LevelSortValue(left, selectedDifficulty), LevelSortValue(right, selectedDifficulty), SongTieBreak(left, right));
+                    return (left, right) => CompareNullableAscending(LevelSortValue(left, selectedDifficulty), LevelSortValue(right, selectedDifficulty), SourceThenSongTieBreak(left, right));
                 case MapListSortMode.NoteDesigner:
                     return (left, right) => CompareText(DesignerForDifficulty(left, selectedDifficulty), DesignerForDifficulty(right, selectedDifficulty), SongTieBreak(left, right));
                 case MapListSortMode.Title:
@@ -1230,7 +1457,14 @@ namespace MajdataQolSongListMod
                 }
             }
 
-            return ReadRuntimeScore(song, selectedDifficulty);
+            ScoreFacet runtimeScore = ReadRuntimeScore(song, selectedDifficulty);
+            int? visibleOnlinePlayCount = ReadVisibleOnlinePlayCount(song);
+            if (visibleOnlinePlayCount.HasValue)
+            {
+                return new ScoreFacet(runtimeScore.Rank, visibleOnlinePlayCount, runtimeScore.HasFullCombo, runtimeScore.HasAllPerfect, runtimeScore.DxScore);
+            }
+
+            return runtimeScore;
         }
 
         private static ScoreFacet ReadRuntimeScore(ISongDetail song, int selectedDifficulty)
@@ -1270,6 +1504,144 @@ namespace MajdataQolSongListMod
             catch
             {
                 return ScoreFacet.Empty();
+            }
+        }
+
+        private static int? ReadVisibleOnlinePlayCount(ISongDetail song)
+        {
+            if (song == null || !song.IsOnline)
+            {
+                return null;
+            }
+
+            QolRuntimeBridge active = Active;
+            if (active != null && !string.IsNullOrWhiteSpace(song.Hash))
+            {
+                lock (active._scoreOverrideLock)
+                {
+                    int overridePlayCount;
+                    if (active._onlinePlayCountOverrides.TryGetValue(song.Hash, out overridePlayCount))
+                    {
+                        return overridePlayCount;
+                    }
+                }
+            }
+
+            try
+            {
+                Type onlineType = typeof(SongStorage).Assembly.GetType("MajdataPlay.Net.Online");
+                if (onlineType == null)
+                {
+                    return null;
+                }
+
+                MethodInfo getCachedResponse = onlineType.GetMethod("GetCachedResponse", StaticFlags);
+                if (getCachedResponse == null)
+                {
+                    return null;
+                }
+
+                ParameterInfo[] parameters = getCachedResponse.GetParameters();
+                if (parameters.Length != 1 || !parameters[0].ParameterType.IsAssignableFrom(song.GetType()))
+                {
+                    return ReadVisibleOnlinePlayCountByHash(onlineType, song.Hash);
+                }
+
+                object cachedResponse = getCachedResponse.Invoke(null, new object[] { song });
+                int? directPlayCount = ReadPlayCountFromCachedResponse(cachedResponse);
+                if (directPlayCount.HasValue)
+                {
+                    return directPlayCount;
+                }
+
+                return ReadVisibleOnlinePlayCountByHash(onlineType, song.Hash);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int? ReadPlayCountFromCachedResponse(object cachedResponse)
+        {
+            object interact = GetMemberValue(cachedResponse, "Interact");
+            object response = GetMemberValue(interact, "Response");
+            long plays;
+            return TryLong(GetMemberValue(response, "Plays"), out plays) && plays > 0 ? ClampToInt(plays) : (int?)null;
+        }
+
+        private static int? ReadVisibleOnlinePlayCountByHash(Type onlineType, string hash)
+        {
+            QolRuntimeBridge active = Active;
+            return active == null ? null : active.CachedVisibleOnlinePlayCountByHash(onlineType, hash);
+        }
+
+        private int? CachedVisibleOnlinePlayCountByHash(Type onlineType, string hash)
+        {
+            if (onlineType == null || string.IsNullOrWhiteSpace(hash))
+            {
+                return null;
+            }
+
+            lock (_visibleOnlinePlayCountCacheLock)
+            {
+                if (_visibleOnlinePlayCountByHashCache == null)
+                {
+                    _visibleOnlinePlayCountByHashCache = BuildVisibleOnlinePlayCountByHash(onlineType);
+                }
+
+                int playCount;
+                return _visibleOnlinePlayCountByHashCache.TryGetValue(hash, out playCount) ? playCount : (int?)null;
+            }
+        }
+
+        private static Dictionary<string, int> BuildVisibleOnlinePlayCountByHash(Type onlineType)
+        {
+            Dictionary<string, int> result = new Dictionary<string, int>(StringComparer.Ordinal);
+            try
+            {
+                FieldInfo cachedResponsesField = onlineType.GetField("_cachedResponse", StaticFlags);
+                object cachedResponsesObject = cachedResponsesField == null ? null : cachedResponsesField.GetValue(null);
+                IDictionary dictionary = cachedResponsesObject as IDictionary;
+                if (dictionary != null)
+                {
+                    foreach (DictionaryEntry entry in dictionary)
+                    {
+                        AddCachedPlayCount(result, entry.Key as ISongDetail, entry.Value);
+                    }
+
+                    return result;
+                }
+
+                IEnumerable cachedResponses = cachedResponsesObject as IEnumerable;
+                if (cachedResponses == null)
+                {
+                    return result;
+                }
+
+                foreach (object entry in cachedResponses)
+                {
+                    AddCachedPlayCount(result, GetMemberValue(entry, "Key") as ISongDetail, GetMemberValue(entry, "Value"));
+                }
+            }
+            catch
+            {
+            }
+
+            return result;
+        }
+
+        private static void AddCachedPlayCount(Dictionary<string, int> result, ISongDetail cachedSong, object cachedResponse)
+        {
+            if (result == null || cachedSong == null || string.IsNullOrWhiteSpace(cachedSong.Hash))
+            {
+                return;
+            }
+
+            int? playCount = ReadPlayCountFromCachedResponse(cachedResponse);
+            if (playCount.HasValue)
+            {
+                result[cachedSong.Hash] = playCount.Value;
             }
         }
 
@@ -1354,6 +1726,16 @@ namespace MajdataQolSongListMod
             }
 
             return StringComparer.OrdinalIgnoreCase.Compare(left.Hash ?? string.Empty, right.Hash ?? string.Empty);
+        }
+
+        private static int SourceThenSongTieBreak(ISongDetail left, ISongDetail right)
+        {
+            if (left != null && right != null && left.IsOnline != right.IsOnline)
+            {
+                return left.IsOnline ? 1 : -1;
+            }
+
+            return SongTieBreak(left, right);
         }
 
         private static int CompareText(string left, string right, int tieBreak)
@@ -1509,6 +1891,28 @@ namespace MajdataQolSongListMod
             return LevelBucketizer.Bucketize(levels[selectedDifficulty]);
         }
 
+        private static IEnumerable<string> LevelBuckets(ISongDetail song)
+        {
+            HashSet<string> buckets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ReadOnlySpan<string> levels = song.Levels;
+            for (int i = 0; i < levels.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(levels[i]))
+                {
+                    continue;
+                }
+
+                buckets.Add(LevelBucketizer.Bucketize(levels[i]));
+            }
+
+            if (buckets.Count == 0)
+            {
+                buckets.Add("Other");
+            }
+
+            return buckets;
+        }
+
         private static string TitleBucket(string title)
         {
             if (string.IsNullOrWhiteSpace(title))
@@ -1561,7 +1965,7 @@ namespace MajdataQolSongListMod
             return 0;
         }
 
-        private void SetSongStorageCollections(SongCollection[] collections)
+        private void SetSongStorageCollections(SongCollection[] collections, string preferredSongHash = null)
         {
             PropertyInfo property = typeof(SongStorage).GetProperty("Collections", StaticFlags);
             MethodInfo setter = property.GetSetMethod(true);
@@ -1571,10 +1975,10 @@ namespace MajdataQolSongListMod
                 SongStorage.CollectionIndex = 0;
             }
 
-            SyncActiveCoverListCollections(collections);
+            SyncActiveCoverListCollections(collections, preferredSongHash);
         }
 
-        private static void SyncActiveCoverListCollections(SongCollection[] collections)
+        private static void SyncActiveCoverListCollections(SongCollection[] collections, string preferredSongHash = null)
         {
             if (collections == null || collections.Length == 0)
             {
@@ -1595,14 +1999,17 @@ namespace MajdataQolSongListMod
             bool wasChartList = displayer.IsChartList;
             bool wasDirList = displayer.IsDirList;
             bool switchedDirThroughSongList = false;
-            ISongDetail selectedSong = null;
-            try
+            ISongDetail selectedSong = PreferredSong(collections, SongStorage.CollectionIndex, preferredSongHash);
+            if (selectedSong == null)
             {
-                selectedSong = wasChartList ? displayer.SelectedSong : SongStorage.WorkingCollection.Current;
-            }
-            catch
-            {
-                selectedSong = null;
+                try
+                {
+                    selectedSong = wasChartList ? displayer.SelectedSong : SongStorage.WorkingCollection.Current;
+                }
+                catch
+                {
+                    selectedSong = null;
+                }
             }
 
             if (wasChartList)
@@ -1651,12 +2058,128 @@ namespace MajdataQolSongListMod
             {
                 displayer.SwitchToDirList();
             }
+
+            if (!string.IsNullOrWhiteSpace(preferredSongHash))
+            {
+                AlignActiveSongCursor(displayer, collections, preferredSongHash);
+            }
+        }
+
+        private static void AlignActiveSongCursor(CoverListDisplayer displayer, SongCollection[] collections, string preferredSongHash)
+        {
+            if (displayer == null || collections == null || SongStorage.CollectionIndex < 0 || SongStorage.CollectionIndex >= collections.Length)
+            {
+                return;
+            }
+
+            SongCollection collection = collections[SongStorage.CollectionIndex];
+            if (collection == null || collection.Count == 0)
+            {
+                return;
+            }
+
+            ISongDetail target = PreferredSong(collections, SongStorage.CollectionIndex, preferredSongHash) ?? collection.Current;
+            if (target == null)
+            {
+                return;
+            }
+
+            collection.SetCursor(target);
+            SetCursorInPrivateCollections(displayer, SongStorage.CollectionIndex, target);
+            int index = Math.Max(0, Math.Min(collection.Index, collection.Count - 1));
+            try
+            {
+                MethodInfo setCursor = typeof(CoverListDisplayer).GetMethod("SetCursor", InstanceFlags);
+                if (setCursor != null)
+                {
+                    setCursor.Invoke(displayer, new object[] { target });
+                    collection.SetCursor(target);
+                    index = Math.Max(0, Math.Min(collection.Index, collection.Count - 1));
+                }
+
+                SetPrivateField(displayer, "_currentCollection", collection);
+                MethodInfo slide = typeof(CoverListDisplayer).GetMethod("SlideListInternal", InstanceFlags);
+                if (slide != null)
+                {
+                    slide.Invoke(displayer, new object[] { index });
+                }
+                SetPrivateField(displayer, "desiredListPos", index);
+                SetPrivateField(displayer, "listPosReal", (float)index);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SetCursorInPrivateCollections(CoverListDisplayer displayer, int collectionIndex, ISongDetail target)
+        {
+            if (displayer == null || collectionIndex < 0 || target == null)
+            {
+                return;
+            }
+
+            string[] fields =
+            {
+                "_collections",
+                "_easySortedCollections",
+                "_basicSortedCollections",
+                "_advanceSortedCollections",
+                "_expertSortedCollections",
+                "_masterSortedCollections",
+                "_reMasterSortedCollections",
+                "_utageSortedCollections"
+            };
+
+            foreach (string field in fields)
+            {
+                object value = GetPrivateField<object>(displayer, field);
+                SongCollection collection = GetIndexedValue(value, collectionIndex) as SongCollection;
+                if (collection != null && collection.Count > 0)
+                {
+                    collection.SetCursor(target);
+                }
+            }
+        }
+
+        private static bool ActiveSelectionMatches(string songHash)
+        {
+            if (string.IsNullOrWhiteSpace(songHash))
+            {
+                return true;
+            }
+
+            try
+            {
+                CoverListDisplayer list = ActiveCoverListDisplayer();
+                ISongDetail selected = list == null ? null : list.SelectedSong;
+                return selected != null && string.Equals(selected.Hash, songHash, StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool CanSwitchCurrentCollectionToSongList(CoverListDisplayer displayer)
         {
             SongCollection current = GetPrivateField<SongCollection>(displayer, "_currentCollection");
             return current != null && current.Count > 0 && current.Type != ChartStorageType.Dan;
+        }
+
+        private static ISongDetail PreferredSong(SongCollection[] collections, int collectionIndex, string preferredSongHash)
+        {
+            if (collections == null || collectionIndex < 0 || collectionIndex >= collections.Length || string.IsNullOrWhiteSpace(preferredSongHash))
+            {
+                return null;
+            }
+
+            SongCollection collection = collections[collectionIndex];
+            if (collection == null || collection.Count == 0)
+            {
+                return null;
+            }
+
+            return collection.ToArray().FirstOrDefault(song => song != null && string.Equals(song.Hash, preferredSongHash, StringComparison.Ordinal));
         }
 
         private static void PreserveCollectionCursor(SongCollection[] collections, int collectionIndex, ISongDetail selectedSong)
