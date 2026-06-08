@@ -41,7 +41,12 @@ namespace MajdataQolSongListMod
         {
             QolSongListModLogic logic = new QolSongListModLogic();
             MelonLogger.Msg(logic.StartupMessage());
-            _bridge = new QolRuntimeBridge(message => MelonLogger.Msg(message), error => MelonLogger.Error(error));
+            MelonLogger.Msg(logic.StartupDiagnostics());
+            _bridge = new QolRuntimeBridge(
+                message => MelonLogger.Msg(message),
+                error => MelonLogger.Error(error),
+                logic.ActivePlayerSession,
+                LocalProfilePaths.DefaultRoot(Environment.CurrentDirectory));
             _unityContext = SynchronizationContext.Current;
             if (_unityContext != null)
             {
@@ -209,6 +214,8 @@ namespace MajdataQolSongListMod
         private readonly Dictionary<string, ScoreFacet> _scoreOverrides = new Dictionary<string, ScoreFacet>(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _onlinePlayCountOverrides = new Dictionary<string, int>(StringComparer.Ordinal);
         private readonly List<WebsiteRuntimeCollection> _websiteCollections = new List<WebsiteRuntimeCollection>();
+        private readonly ActivePlayerSession _activePlayerSession;
+        private readonly LocalProfileStore _localProfileStore;
         private readonly object _selectedSongMetadataLock = new object();
         private readonly object _scoreOverrideLock = new object();
         private readonly object _visibleOnlinePlayCountCacheLock = new object();
@@ -237,9 +244,16 @@ namespace MajdataQolSongListMod
         private bool _capturedStorageSelectionForScene;
 
         public QolRuntimeBridge(Action<string> log, Action<string> error)
+            : this(log, error, new ActivePlayerSession(), LocalProfilePaths.DefaultRoot(Environment.CurrentDirectory))
+        {
+        }
+
+        public QolRuntimeBridge(Action<string> log, Action<string> error, ActivePlayerSession activePlayerSession, string localProfileRoot)
         {
             _log = log;
             _error = error;
+            _activePlayerSession = activePlayerSession ?? new ActivePlayerSession();
+            _localProfileStore = new LocalProfileStore(string.IsNullOrWhiteSpace(localProfileRoot) ? LocalProfilePaths.DefaultRoot(Environment.CurrentDirectory) : localProfileRoot);
             Active = this;
         }
 
@@ -249,7 +263,35 @@ namespace MajdataQolSongListMod
         {
             string[] names = SongStorage.Collections.Select(collection => collection.Name).ToArray();
             bool hasRandom = names.Any(name => string.Equals(name, RandomRecommendedName, StringComparison.Ordinal));
-            return "collections=" + string.Join("|", names) + "; hasRandomRecommended=" + hasRandom;
+            return "collections=" + string.Join("|", names) + "; hasRandomRecommended=" + hasRandom + "; " + CurrentPlayerSessionSnapshot().ToDiagnosticString();
+        }
+
+        public static string ActivePlayerSessionDiagnosticsSnapshot()
+        {
+            return CurrentPlayerSessionSnapshot().ToDiagnosticString();
+        }
+
+        public static string LocalProfileStoreDiagnosticsSnapshot()
+        {
+            if (Active == null)
+            {
+                return "profileRoot=; savedProfiles=0";
+            }
+
+            IReadOnlyList<LocalProfileMetadata> profiles = Active._localProfileStore.ListSavedProfiles();
+            return "profileRoot=" + Active._localProfileStore.RootDirectory +
+                "; savedProfiles=" + profiles.Count.ToString(CultureInfo.InvariantCulture) +
+                "; profileIds=" + string.Join("|", profiles.Select(profile => profile.ProfileId).ToArray());
+        }
+
+        private static ActivePlayerSessionSnapshot CurrentPlayerSessionSnapshot()
+        {
+            if (Active == null || Active._activePlayerSession == null)
+            {
+                return ActivePlayerSessionSnapshot.Guest();
+            }
+
+            return Active._activePlayerSession.Current;
         }
 
         public static bool SetGroupingModeForDiagnostics(string groupingMode)

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: completed
 
 # Bootable local profiles shell with Guest session default
 
@@ -14,14 +14,18 @@ This slice should make the rest of the feature possible while staying safe: no L
 
 ## Acceptance criteria
 
-- [ ] The active player session defaults to `Guest` with no selected local profile and a Guest save target.
-- [ ] The active player session exposes a simple testable API for Guest, Local Profile, and majdata.net Account modes, even if only Guest is reachable from UI in this slice.
-- [ ] The local profile store can list profiles on a machine when none exist and returns an empty saved-profile list without creating unintended data.
-- [ ] Guest score, favorite, and settings behavior remains unchanged when no local profile has been selected.
-- [ ] Startup diagnostics or an equivalent test seam can report the current active player mode for integration tests.
-- [ ] Unit tests cover the session default, basic mode transitions, empty local-profile list behavior, and Guest preservation.
-- [ ] A real-game smoke test proves MajdataPlay still boots to the current flow without fatal logs or unexpected UI replacement.
+- [x] The active player session defaults to `Guest` with no selected local profile and a Guest save target.
+- [x] The active player session exposes a simple testable API for Guest, Local Profile, and majdata.net Account modes, even if only Guest is reachable from UI in this slice.
+- [x] The local profile store can list profiles on a machine when none exist and returns an empty saved-profile list without creating unintended data.
+- [x] Guest score, favorite, and settings behavior remains unchanged when no local profile has been selected.
+- [x] Startup diagnostics or an equivalent test seam can report the current active player mode for integration tests.
+- [x] Unit tests cover the session default, basic mode transitions, empty local-profile list behavior, and Guest preservation.
+- [x] A real-game smoke test proves MajdataPlay still boots to the current flow without fatal logs or unexpected UI replacement.
 
 ## Blocked by
 
 None - can start immediately.
+
+## Comments
+
+- 2026-06-08: Implemented the bootable local profiles shell with a default Guest `ActivePlayerSession`, local profile metadata listing, guest-preserving storage route seam, startup/eval diagnostics, focused unit coverage, and a real-game local-profiles boot smoke test.

@@ -138,5 +138,16 @@ namespace MajdataQolSongListMod.Core.Tests
                 "Majdata QoL Song List core ready: difficultyFilter=No sorting=Default grouping=Default downloadedSongsFilter=Mixed",
                 logic.StartupMessage());
         }
+
+        [Fact]
+        public void StartupDiagnosticsReportGuestActivePlayerSession()
+        {
+            QolSongListModLogic logic = new QolSongListModLogic();
+
+            string diagnostics = logic.StartupDiagnostics();
+
+            Assert.Contains("activePlayerMode=Guest", diagnostics);
+            Assert.Contains("saveTargetKind=Guest", diagnostics);
+        }
     }
 }
