@@ -24,6 +24,18 @@ For screenshots of the original game, use the TestHookMod + Unity
 `ScreenCapture.CaptureScreenshot` workflow. See
 `docs/capturing-majdataplay-screenshots.md`.
 
+## UI Guidelines
+
+The UI should be mainly controlled with physical buttons like the current game UI.
+
+It should be situated in the bottom circular part of the screen like the current UI - the user can not see outside of this area.
+
+For pure informational elements the user can't interact with they can be situated in the upper rectangular part of the screen like the current UI.
+
+When possible base your design on existing screens unless requested otherwise.
+
+When prototyping the UI take screenshots to make sure it looks right and satisfies the requirements above.
+
 ## Agent skills
 
 ### Issue tracker
